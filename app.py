@@ -2,7 +2,9 @@ import os, urllib.parse, uuid, time, threading, glob, shutil, hashlib
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 import yt_dlp, re, json, urllib.request
-from convert import create_job as c_create, CJOBS, cleanup_c, targets_for, MIME as CMIME, MAX_UPLOAD, _have_soffice
+from convert import (create_job as c_create, CJOBS, cleanup_c, targets_for, MIME as CMIME, MAX_UPLOAD,
+                    _have_soffice, init_upload, save_chunk, finish_upload, cleanup_uploads,
+                    disk_free, need_bytes, UCHUNK, ensure_disk)
 
 UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
 
@@ -321,35 +323,100 @@ def ensure_mp4(j):
         return out
 
 
+def _cerr(e):
+    code = str(e)
+    status = 400
+    if code == "too_large":
+        status = 413
+    elif code == "busy":
+        status = 429
+    elif code == "no_space":
+        status = 507
+    raise HTTPException(status, code)
+
 @app.post("/c/job")
 async def cjob(req: Request):
-    cleanup_c()
+    """Small uploads only. Large files must use /c/upload/* chunks."""
+    cleanup_c(); cleanup_uploads()
     form = await req.form()
     f = form.get("file")
     dst = (form.get("format") or form.get("to") or "").strip().lower()
     if not f or not hasattr(f, "read"):
         raise HTTPException(400, "no_file")
-    data = await f.read()
-    if len(data) > MAX_UPLOAD:
-        raise HTTPException(413, "too_large")
-    if not data:
-        raise HTTPException(400, "empty")
     name = getattr(f, "filename", None) or "file.bin"
     import tempfile
     fd, tmp = tempfile.mkstemp(prefix="cup_")
     os.close(fd)
+    size = 0
     try:
-        open(tmp, "wb").write(data)
-        jid = c_create(tmp, name, dst, len(data))
+        with open(tmp, "wb") as out:
+            while True:
+                chunk = await f.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_UPLOAD:
+                    raise ValueError("too_large")
+                out.write(chunk)
+        if size == 0:
+            raise ValueError("empty")
+        ensure_disk(size)
+        jid = c_create(tmp, name, dst, size)
     except ValueError as e:
         try: os.remove(tmp)
         except Exception: pass
-        code = str(e)
-        raise HTTPException(429 if code == "busy" else 400, code)
+        _cerr(e)
     except Exception:
         try: os.remove(tmp)
         except Exception: pass
         raise
+    return {"id": jid}
+
+@app.post("/c/upload/init")
+async def cup_init(req: Request):
+    cleanup_c(); cleanup_uploads()
+    body = await req.json()
+    try:
+        uid = init_upload(body.get("name") or "file.bin", body.get("size") or 0,
+                          body.get("format") or body.get("to") or "", body.get("chunks") or 0)
+    except ValueError as e:
+        _cerr(e)
+    return {"id": uid, "chunk": UCHUNK, "free": disk_free()}
+
+@app.put("/c/upload/{uid}/{index}")
+async def cup_chunk(uid: str, index: int, req: Request):
+    u_free = disk_free()
+    if u_free < 20 * 1024 * 1024:
+        raise HTTPException(507, "no_space")
+    import tempfile
+    # stream body to a temp file then into save_chunk (avoids loading all RAM)
+    fd, tmp = tempfile.mkstemp(prefix="chk_")
+    os.close(fd)
+    try:
+        size = 0
+        with open(tmp, "wb") as out:
+            async for chunk in req.stream():
+                size += len(chunk)
+                if size > UCHUNK + 1024 * 1024:
+                    raise ValueError("chunk_too_big")
+                out.write(chunk)
+        with open(tmp, "rb") as inp:
+            got, total = save_chunk(uid, index, inp)
+    except ValueError as e:
+        try: os.remove(tmp)
+        except Exception: pass
+        _cerr(e)
+    finally:
+        try: os.remove(tmp)
+        except Exception: pass
+    return {"got": got, "total": total}
+
+@app.post("/c/upload/{uid}/finish")
+async def cup_finish(uid: str):
+    try:
+        jid = finish_upload(uid)
+    except ValueError as e:
+        _cerr(e)
     return {"id": jid}
 
 @app.get("/c/job/{jid}")
@@ -371,7 +438,8 @@ def cfile(jid: str):
 
 @app.get("/c/targets")
 def ctargets(ext: str = ""):
-    return {"targets": targets_for(ext), "libreoffice": bool(_have_soffice()), "max_bytes": MAX_UPLOAD}
+    return {"targets": targets_for(ext), "libreoffice": bool(_have_soffice()),
+            "max_bytes": MAX_UPLOAD, "chunk": UCHUNK, "free": disk_free()}
 
 @app.get("/")
 def index():

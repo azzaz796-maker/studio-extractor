@@ -4,7 +4,7 @@ import os, time, uuid, threading, shutil, subprocess, glob
 CJOBS = {}
 CLOCK = threading.Lock()
 CSEM = threading.Semaphore(1)  # one convert at a time on free tier
-MAX_UPLOAD = 100 * 1024 * 1024
+MAX_UPLOAD = 800 * 1024 * 1024  # soft cap; disk space is the hard limit
 TTL = 15 * 60
 ROOT = "/tmp/cjobs"
 
@@ -77,8 +77,22 @@ def cleanup_c():
                 CJOBS.pop(jid, None)
 
 
-def _ff(inp, out, *extra, timeout=600):
-    cmd = ["ffmpeg", "-y", "-v", "error", "-i", inp, *extra, out]
+def disk_free(path="/tmp"):
+    return shutil.disk_usage(path).free
+
+
+def need_bytes(size):
+    # input + converted output + ffmpeg overhead
+    return int(size) * 2 + 80 * 1024 * 1024
+
+
+def ensure_disk(size):
+    if disk_free() < need_bytes(size):
+        raise ValueError("no_space")
+
+
+def _ff(inp, out, *extra, timeout=1800):
+    cmd = ["ffmpeg", "-y", "-v", "error", "-threads", "1", "-i", inp, "-threads", "1", *extra, out]
     r = _run(cmd, timeout=timeout)
     if r.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) == 0:
         err = (r.stderr or b"").decode("utf-8", "ignore")[-400:]
@@ -370,6 +384,7 @@ def create_job(upload_path, src_name, dst_ext, size):
     cleanup_c()
     if size > MAX_UPLOAD:
         raise ValueError("too_large")
+    ensure_disk(size)
     src_ext = (os.path.splitext(src_name)[1] or "").lstrip(".").lower()
     if src_ext == "jpeg":
         src_ext = "jpg"
@@ -392,3 +407,105 @@ def create_job(upload_path, src_name, dst_ext, size):
                       "src_name": src_name}
     threading.Thread(target=run_job, args=(jid,), daemon=True).start()
     return jid
+
+
+# ——— chunked upload sessions (bypass Render proxy body limits) ———
+UPLOADS = {}
+UCHUNK = 12 * 1024 * 1024  # 12 MB parts
+UROOT = "/tmp/cuploads"
+
+
+def init_upload(name, size, dst_ext, n_chunks):
+    cleanup_c()
+    size = int(size)
+    n_chunks = int(n_chunks)
+    if size <= 0 or n_chunks <= 0:
+        raise ValueError("empty")
+    if size > MAX_UPLOAD:
+        raise ValueError("too_large")
+    ensure_disk(size)
+    src_ext = (os.path.splitext(name)[1] or "").lstrip(".").lower()
+    if src_ext == "jpeg":
+        src_ext = "jpg"
+    dst_ext = (dst_ext or "").lower().lstrip(".")
+    if dst_ext == "jpeg":
+        dst_ext = "jpg"
+    if not kind_of(src_ext) or dst_ext not in targets_for(src_ext):
+        raise ValueError("unsupported")
+    with CLOCK:
+        active = sum(1 for j in CJOBS.values() if j["state"] in ("queued", "running"))
+        if active >= 3:
+            raise ValueError("busy")
+        uid = uuid.uuid4().hex
+        d = os.path.join(UROOT, uid)
+        os.makedirs(d, exist_ok=True)
+        UPLOADS[uid] = {
+            "dir": d, "name": name, "size": size, "dst_ext": dst_ext, "src_ext": src_ext,
+            "n": n_chunks, "got": set(), "at": time.time(),
+        }
+    return uid
+
+
+def save_chunk(uid, index, stream):
+    u = UPLOADS.get(uid)
+    if not u:
+        raise ValueError("no_upload")
+    index = int(index)
+    if index < 0 or index >= u["n"]:
+        raise ValueError("bad_chunk")
+    path = os.path.join(u["dir"], f"part-{index:05d}")
+    written = 0
+    with open(path, "wb") as out:
+        while True:
+            buf = stream.read(1024 * 1024)
+            if not buf:
+                break
+            written += len(buf)
+            if written > UCHUNK + 1024 * 1024:
+                raise ValueError("chunk_too_big")
+            out.write(buf)
+    if written == 0:
+        raise ValueError("empty")
+    u["got"].add(index)
+    u["at"] = time.time()
+    return len(u["got"]), u["n"]
+
+
+def finish_upload(uid):
+    u = UPLOADS.get(uid)
+    if not u:
+        raise ValueError("no_upload")
+    if len(u["got"]) != u["n"]:
+        raise ValueError("incomplete")
+    ensure_disk(u["size"])
+    assembled = os.path.join(u["dir"], f"in.{u['src_ext']}")
+    with open(assembled, "wb") as out:
+        for i in range(u["n"]):
+            part = os.path.join(u["dir"], f"part-{i:05d}")
+            with open(part, "rb") as inp:
+                shutil.copyfileobj(inp, out, 1024 * 1024)
+            os.remove(part)
+    got = os.path.getsize(assembled)
+    # allow small mismatch from reported size
+    if abs(got - u["size"]) > 64 and got > u["size"] + 1024:
+        raise ValueError("size_mismatch")
+    if got > MAX_UPLOAD:
+        raise ValueError("too_large")
+    jid = create_job(assembled, u["name"], u["dst_ext"], got)
+    # drop session meta; create_job moved file into job dir
+    with CLOCK:
+        UPLOADS.pop(uid, None)
+        try:
+            shutil.rmtree(u["dir"], ignore_errors=True)
+        except Exception:
+            pass
+    return jid
+
+
+def cleanup_uploads():
+    now = time.time()
+    with CLOCK:
+        for uid, u in list(UPLOADS.items()):
+            if now - u.get("at", 0) > TTL:
+                shutil.rmtree(u.get("dir") or "", ignore_errors=True)
+                UPLOADS.pop(uid, None)
