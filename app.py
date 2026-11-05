@@ -138,41 +138,147 @@ def run(jid, url):
             return
         j.update(state="error", error=err)
 
-@app.get("/health")
-def health():
-    return {"ok": True, "ytdlp": yt_dlp.version.__version__}
+PLAT = re.compile(r"^https://([a-z0-9-]+\.)*(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|x\.com|twitter\.com)/", re.I)
+ALLOW = ["gendownload.com","tikwm.com","twimg.com","googlevideo.com","ytimg.com","tiktokcdn.com","tiktokcdn-us.com",
+         "tiktokv.com","cdninstagram.com","fbcdn.net","xenon.zone","cjs.nz"]
+DUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
-@app.post("/job")
-async def job(req: Request):
-    auth(req)
+def host_ok(h):
+    h = (h or "").lower()
+    return any(h == d or h.endswith("." + d) for d in ALLOW)
+
+def ar_err(code, msg, status=422):
+    return JSONResponse({"ok": False, "error": code, "detail": msg}, status_code=status)
+
+def gendownload(url):
+    r = urllib.request.urlopen(urllib.request.Request("https://gendownload.com/api/extract", data=json.dumps({"url": url}).encode(),
+        headers={"content-type": "application/json", "accept": "application/json", "user-agent": DUA,
+                 "origin": "https://gendownload.com", "referer": "https://gendownload.com/"}), timeout=25)
+    d = json.loads(r.read())
+    fm = [f for f in d.get("formats") or [] if f.get("url") and f.get("type") != "audio"]
+    if not fm:
+        return None
+    def h(f):
+        m = re.search(r"(\d{3,4})", f.get("label") or ""); return int(m[1]) if m else 0
+    under = sorted([f for f in fm if 0 < h(f) <= 720], key=h, reverse=True)
+    best = (under or sorted(fm, key=h, reverse=True))[0]
+    fmts = [{"label": f.get("label"), "type": "video", "url": f["url"], "ext": f.get("ext") or "mp4",
+             "filesize": f.get("filesize"), "height": h(f)} for f in fm]
+    title = d.get("title") or "video"
+    return {"ok": True, "title": title, "author": d.get("author"), "thumbnail": d.get("thumbnail"), "source": d.get("source"),
+            "filename": re.sub(r"[^\w\s.-]+", "", title).strip()[:80] + ".mp4" if re.sub(r"[^\w\s.-]+", "", title).strip() else "video.mp4",
+            "url": best["url"], "formats": fmts, "provider": "gendownload", "estimatedSize": best.get("filesize")}
+
+@app.post("/api/resolve")
+async def resolve(req: Request):
+    try:
+        url = ((await req.json()).get("url") or "").strip()
+    except Exception:
+        return ar_err("invalid_json", "طلب غير صالح", 400)
+    if not PLAT.match(url):
+        return ar_err("invalid_url", "الصق رابط فيديو صالح من يوتيوب أو تيك توك أو إنستغرام أو X", 400)
+    import asyncio
+    m = re.search(r"youtube\.com/shorts/([\w-]{6,})", url) or re.search(r"youtu\.be/([\w-]{6,})", url)
+    if m:
+        url = "https://www.youtube.com/watch?v=" + m[1]
+    t0 = time.time()
+    while time.time() - t0 < 80:
+        try:
+            r = await asyncio.wait_for(asyncio.to_thread(gendownload, url), 30)
+            if r:
+                return r
+        except Exception:
+            pass
+        await asyncio.sleep(1)
+    if "youtu" not in url:
+        try:
+            u, meta = await asyncio.to_thread(alt_source, url)
+            if u:
+                return {"ok": True, "title": meta.get("title"), "thumbnail": meta.get("thumbnail"), "filename": "video.mp4",
+                        "url": u, "formats": [], "provider": "alt", "estimatedSize": None}
+        except Exception:
+            pass
+    return ar_err("resolve_failed", "تعذّر استخراج الفيديو الآن. تأكد أن الرابط عام وأعد المحاولة بعد لحظات.")
+
+@app.get("/dl")
+def dl(req: Request, u: str = "", filename: str = "video.mp4"):
+    from fastapi.responses import StreamingResponse, Response
+    p = urllib.parse.urlparse(u)
+    if p.scheme != "https" or not host_ok(p.hostname):
+        return Response("host not allowed", status_code=403)
+    h = {"user-agent": req.headers.get("user-agent") or UA, "accept": "*/*"}
+    if req.headers.get("range"): h["range"] = req.headers["range"]
+    host = p.hostname.lower()
+    if host.endswith("gendownload.com"):
+        h.update(referer="https://gendownload.com/", origin="https://gendownload.com")
+    elif "googlevideo" in host or host.endswith("ytimg.com"):
+        h.update(referer="https://www.youtube.com/", origin="https://www.youtube.com")
+    try:
+        up = urllib.request.urlopen(urllib.request.Request(u, headers=h), timeout=60)
+    except Exception:
+        return Response("upstream fetch failed", status_code=502)
+    if not host_ok(urllib.parse.urlparse(up.geturl()).hostname):
+        return Response("host not allowed", status_code=403)
+    cl = up.headers.get("content-length")
+    if cl == "0":
+        return Response("empty upstream", status_code=502)
+    name = re.sub(r'[/\\?%*:|"<>]', "", filename).strip()[:120] or "video.mp4"
+    ascii_ = re.sub(r"[^\x20-\x7E]", "_", name).replace('"', "")
+    oh = {"content-disposition": f"attachment; filename=\"{ascii_}\"; filename*=UTF-8''{urllib.parse.quote(name)}",
+          "cache-control": "private, no-store", "accept-ranges": "bytes"}
+    if cl: oh["content-length"] = cl
+    if up.headers.get("content-range"): oh["content-range"] = up.headers["content-range"]
+    def gen():
+        try:
+            while True:
+                b = up.read(1 << 16)
+                if not b: break
+                yield b
+        finally:
+            up.close()
+    return StreamingResponse(gen(), status_code=up.status, media_type=up.headers.get("content-type") or "video/mp4", headers=oh)
+
+def create_job(url):
     cleanup()
-    body = await req.json()
-    url = (body.get("url") or "").strip()
-    if not url.startswith(("http://", "https://")):
-        raise HTTPException(400, "bad url")
     with LOCK:
         jid = BY_URL.get(url)
         if jid and JOBS.get(jid, {}).get("state") != "error":
-            return {"id": jid}
+            return jid
+        if sum(1 for j in JOBS.values() if j["state"] in ("queued", "running")) > 8:
+            raise HTTPException(429, "busy")
         jid = uuid.uuid4().hex
         JOBS[jid] = {"url": url, "state": "queued", "progress": 0, "at": time.time()}
         BY_URL[url] = jid
     threading.Thread(target=run, args=(jid, url), daemon=True).start()
-    return {"id": jid}
+    return jid
 
-@app.get("/job/{jid}")
-def status(jid: str, req: Request):
-    auth(req)
+@app.post("/x/job")
+async def xjob(req: Request):
+    url = ((await req.json()).get("url") or "").strip()
+    if not PLAT.match(url):
+        raise HTTPException(400, "invalid_url")
+    return {"id": create_job(url)}
+
+@app.get("/x/job/{jid}")
+def xstatus(jid: str):
     j = JOBS.get(jid)
     if not j:
         raise HTTPException(404, "no job")
-    return {k: v for k, v in j.items() if k not in ("file",)}
+    return {k: v for k, v in j.items() if k not in ("file", "url")}
 
-@app.get("/file/{jid}")
-def file(jid: str, req: Request):
-    auth(req)
+@app.get("/x/file/{jid}")
+def xfile(jid: str):
     j = JOBS.get(jid)
     if not j or j.get("state") != "done":
         raise HTTPException(404, "not ready")
-    return FileResponse(j["file"], media_type="video/mp4" if j["ext"] == "mp4" else "application/octet-stream",
-                        filename="video." + j["ext"])
+    return FileResponse(j["file"], media_type="video/mp4", filename="video." + j["ext"],
+                        headers={"cache-control": "no-store"})
+
+@app.get("/")
+def index():
+    return FileResponse(os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "index.html"),
+                        media_type="text/html; charset=utf-8", headers={"cache-control": "no-cache"})
+
+@app.get("/health")
+def health():
+    return {"ok": True, "ytdlp": yt_dlp.version.__version__}

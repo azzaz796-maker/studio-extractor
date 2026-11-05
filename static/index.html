@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1020" />
+  <meta name="description" content="حمّل أي مقطع من يوتيوب وتيك توك وإنستقرام وإكس مباشرة إلى الاستوديو" />
+  <title>حفظ للاستوديو</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg0: #070b16;
+      --bg1: #10182b;
+      --card: rgba(255,255,255,0.06);
+      --card-border: rgba(255,255,255,0.12);
+      --text: #f4f7ff;
+      --muted: #a7b0c8;
+      --accent: #6ee7ff;
+      --accent2: #a78bfa;
+      --ok: #34d399;
+      --bad: #fb7185;
+      --warn: #fbbf24;
+      --shadow: 0 20px 60px rgba(0,0,0,.45);
+      --radius: 22px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: "IBM Plex Sans Arabic", system-ui, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(1200px 600px at 100% -10%, rgba(110,231,255,.18), transparent 55%),
+        radial-gradient(900px 500px at -10% 110%, rgba(167,139,250,.2), transparent 50%),
+        linear-gradient(160deg, var(--bg0), var(--bg1));
+      padding: 24px 16px 48px;
+    }
+    .wrap { width: min(560px, 100%); margin: 0 auto; }
+    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+    .logo {
+      width: 48px; height: 48px; border-radius: 16px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      display: grid; place-items: center; font-size: 22px;
+      box-shadow: 0 10px 30px rgba(110,231,255,.25);
+    }
+    h1 { font-size: 1.45rem; margin: 0; font-weight: 700; letter-spacing: -0.02em; }
+    .sub { color: var(--muted); margin: 4px 0 0; font-size: .92rem; line-height: 1.5; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+      padding: 18px;
+      backdrop-filter: blur(16px);
+      box-shadow: var(--shadow);
+    }
+    label { display: block; font-size: .9rem; color: var(--muted); margin-bottom: 8px; }
+    .row { display: flex; gap: 10px; }
+    input[type="url"], input[type="text"] {
+      flex: 1; min-width: 0;
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(0,0,0,.28);
+      color: var(--text);
+      border-radius: 16px;
+      padding: 14px 16px;
+      font: inherit;
+      outline: none;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    input:focus {
+      border-color: rgba(110,231,255,.55);
+      box-shadow: 0 0 0 4px rgba(110,231,255,.12);
+    }
+    button {
+      border: 0; cursor: pointer; font: inherit; font-weight: 600;
+      border-radius: 16px; padding: 14px 18px;
+      color: #041018;
+      background: linear-gradient(135deg, var(--accent), #8ef0c4);
+      box-shadow: 0 10px 24px rgba(110,231,255,.22);
+      white-space: nowrap;
+      transition: transform .12s ease, filter .12s ease, opacity .12s;
+    }
+    button:active { transform: scale(.98); }
+    button:disabled { opacity: .55; cursor: wait; }
+    button.secondary {
+      color: var(--text);
+      background: rgba(255,255,255,.08);
+      border: 1px solid rgba(255,255,255,.12);
+      box-shadow: none;
+    }
+    .platforms { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+    .chip {
+      font-size: .78rem; color: var(--muted);
+      border: 1px solid rgba(255,255,255,.1);
+      background: rgba(255,255,255,.04);
+      border-radius: 999px; padding: 6px 10px;
+    }
+    .status { margin-top: 14px; min-height: 1.4em; font-size: .92rem; color: var(--muted); }
+    .status.ok { color: var(--ok); }
+    .status.bad { color: var(--bad); }
+    .status.warn { color: var(--warn); }
+    .result { display: none; margin-top: 16px; gap: 14px; }
+    .result.show { display: grid; }
+    .thumb {
+      width: 100%; aspect-ratio: 16/10; object-fit: cover;
+      border-radius: 16px; background: rgba(0,0,0,.35);
+      border: 1px solid rgba(255,255,255,.08);
+    }
+    .meta h2 {
+      margin: 0 0 4px; font-size: 1.05rem; line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+    .meta p { margin: 0; color: var(--muted); font-size: .88rem; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+    .hint {
+      margin-top: 18px; padding: 16px 18px;
+      border-radius: 18px;
+      background: rgba(255,255,255,.04);
+      border: 1px dashed rgba(255,255,255,.14);
+      color: var(--muted);
+      font-size: .88rem; line-height: 1.7;
+    }
+    .hint strong { color: var(--text); font-weight: 600; }
+    .hint ol { margin: 8px 0 0; padding-inline-start: 1.2rem; }
+    .foot {
+      margin-top: 22px; text-align: center;
+      color: rgba(167,176,200,.75); font-size: .78rem; line-height: 1.6;
+    }
+    .spinner {
+      width: 16px; height: 16px; border-radius: 50%;
+      border: 2px solid rgba(4,16,24,.25);
+      border-top-color: rgba(4,16,24,.9);
+      display: inline-block; vertical-align: -3px;
+      animation: spin .7s linear infinite; margin-left: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .progress {
+      display: none; margin-top: 12px; height: 10px; border-radius: 999px;
+      background: rgba(255,255,255,.08); overflow: hidden;
+      border: 1px solid rgba(255,255,255,.1);
+    }
+    .progress.show { display: block; }
+    .progress > span {
+      display: block; height: 100%; width: 0%;
+      background: linear-gradient(90deg, var(--accent), #8ef0c4);
+      transition: width .15s ease;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">⬇</div>
+      <div>
+        <h1>حفظ للاستوديو</h1>
+        <p class="sub">الصق رابط المقطع — نحفظه لك جاهز للنقل إلى ألبوم الصور</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <label for="url">رابط المقطع</label>
+      <div class="row">
+        <input id="url" type="text" inputmode="url" autocomplete="off" spellcheck="false"
+          placeholder="الصق أي رابط أو نص مشاركة…" />
+        <button id="paste" type="button" class="secondary" title="لصق">لصق</button>
+        <button id="go" type="button">تحميل</button>
+      </div>
+      <div class="platforms" aria-label="المنصات المدعومة">
+        <span class="chip">YouTube / Shorts ✓</span>
+        <span class="chip">TikTok</span>
+        <span class="chip">Instagram</span>
+        <span class="chip">X / Twitter</span>
+        <span class="chip">Facebook</span>
+      </div>
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+      <div id="progress" class="progress" aria-hidden="true"><span id="progressBar"></span></div>
+      <div id="result" class="result">
+        <img id="thumb" class="thumb" alt="" hidden />
+        <div class="meta">
+          <h2 id="title">—</h2>
+          <p id="author"></p>
+        </div>
+        <div class="actions">
+          <button id="save" type="button" style="display:none">حفظ الفيديو</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="hint">
+      <strong>كيف تحفظه في الاستوديو؟</strong>
+      <ol>
+        <li>الصق الرابط (أو اضغط <strong>لصق</strong>).</li>
+        <li>يبدأ التحميل تلقائياً مع شريط التقدّم.</li>
+        <li>بعد الاكتمال اضغط <strong>حفظ الفيديو</strong>.</li>
+        <li>من قائمة المشاركة اختر <strong>حفظ الفيديو</strong> (آيفون) أو احفظ الملف (أندرويد).</li>
+      </ol>
+    </div>
+
+    <p class="foot">للاستخدام الشخصي فقط على محتوى مسموح لك بحفظه (روابط عامة). بدون تسجيل دخول.</p>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const urlInput = $("url");
+    const goBtn = $("go");
+    const pasteBtn = $("paste");
+    const statusEl = $("status");
+    const resultEl = $("result");
+    const thumbEl = $("thumb");
+    const titleEl = $("title");
+    const authorEl = $("author");
+    const saveBtn = $("save");
+    const progressEl = $("progress");
+    const progressBar = $("progressBar");
+
+    const SHARE_MAX_BYTES = 35 * 1024 * 1024;
+    const RESOLVE_TIMEOUT_MS = 100000;
+
+    let current = null;
+    let resolveGen = 0;
+    let pendingShareFile = null;
+    let lastPageUrl = null;
+
+    function setStatus(text, kind) {
+      statusEl.textContent = text || "";
+      statusEl.className = "status" + (kind ? " " + kind : "");
+    }
+
+    function setProgress(pct) {
+      if (pct == null) {
+        progressEl.classList.remove("show");
+        progressBar.style.width = "0%";
+        progressEl.setAttribute("aria-hidden", "true");
+        return;
+      }
+      const n = Math.max(0, Math.min(100, Math.round(pct)));
+      progressEl.classList.add("show");
+      progressEl.setAttribute("aria-hidden", "false");
+      progressBar.style.width = n + "%";
+    }
+
+    function withTimeout(promise, ms) {
+      return Promise.race([
+        promise,
+        new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms)),
+      ]);
+    }
+
+    function cleanUrl(raw) {
+      if (!raw) return "";
+      let text = String(raw).trim().replace(/^\uFEFF/, "");
+      const found = text.match(/https?:\/\/[^\s<>"']+/i);
+      if (found) text = found[0];
+      text = text.replace(/[)\]\},.،؛]+$/g, "");
+      try {
+        const u = new URL(text);
+        const host = u.hostname.replace(/^www\./, "").toLowerCase();
+        if (host === "youtu.be" && u.pathname.length > 1) {
+          const id = u.pathname.slice(1).split("/")[0];
+          return "https://www.youtube.com/watch?v=" + id;
+        }
+        if (host.endsWith("youtube.com") || host.endsWith("youtube-nocookie.com")) {
+          u.searchParams.delete("feature");
+          u.searchParams.delete("pp");
+          u.searchParams.delete("si");
+          return u.toString();
+        }
+        if (host.endsWith("instagram.com") || host === "instagr.am") {
+          ["igsh", "igshid", "img_index", "utm_source", "utm_medium", "utm_campaign"].forEach((k) => u.searchParams.delete(k));
+          return u.origin + u.pathname.replace(/\/+$/, "") + "/";
+        }
+        if (host === "x.com" || host === "twitter.com" || host === "mobile.twitter.com" || host === "vxtwitter.com" || host === "fxtwitter.com") {
+          const m = u.pathname.match(/\/([^/]+)\/status\/(\d+)/);
+          if (m) return "https://x.com/" + m[1] + "/status/" + m[2];
+        }
+        if (host === "vm.tiktok.com" || host === "vt.tiktok.com" || host.endsWith("tiktok.com")) {
+          ["is_from_webapp", "sender_device", "utm_source", "utm_campaign", "utm_medium"].forEach((k) => u.searchParams.delete(k));
+          return u.toString();
+        }
+        return u.toString();
+      } catch {
+        return text;
+      }
+    }
+
+    function isHttpUrl(s) {
+      return /^https?:\/\//i.test(s || "");
+    }
+
+    function parseHeight(label) {
+      if (!label) return 0;
+      const m = String(label).match(/(\d{3,4})\s*p/i);
+      return m ? Number(m[1]) : 0;
+    }
+
+    function guessFilename(title, ext) {
+      const base = ((title || "video").replace(/[^\p{L}\p{N}\s._-]+/gu, "").trim().slice(0, 80)) || "video";
+      return base + "." + (ext || "mp4");
+    }
+
+    /** Same-origin download proxy — client never hits third parties directly. */
+    function proxyUrl(fileUrl, filename) {
+      if (!fileUrl) return fileUrl;
+      try {
+        const u = new URL(fileUrl, location.href);
+        if (u.origin === location.origin) return fileUrl;
+      } catch {}
+      const q = new URLSearchParams();
+      q.set("u", fileUrl);
+      if (filename) q.set("filename", filename);
+      return "/dl?" + q.toString();
+    }
+
+    function friendlyError(codeOrMsg) {
+      const s = String(codeOrMsg || "");
+      if (/timeout/i.test(s)) return "انتهت المهلة. تحقّق من الاتصال وأعد المحاولة.";
+      if (/invalid_url/i.test(s)) return "الصق رابط مقطع صالح يبدأ بـ https://";
+      if (/resolve_failed|server-fail|all-failed/i.test(s)) {
+        return "تعذّر استخراج الفيديو الآن. تأكد أن الرابط عام وأعد المحاولة.";
+      }
+      if (/empty|http 502|http 504|http 403/i.test(s)) {
+        return "فشل تحميل الملف. أعد لصق الرابط أو جرّب جودة أقل لاحقاً.";
+      }
+      if (/تعذّر|فشل|خطأ|الصق/.test(s)) return s;
+      return "تعذّر استخراج الفيديو الآن. تأكد أن الرابط عام وأعد المحاولة.";
+    }
+
+    /** ONLY same-origin /api/resolve — no browser → third-party extractors. */
+    async function resolveUrl(url) {
+      const res = await withTimeout(
+        fetch("/api/resolve", {
+          method: "POST",
+          headers: { "content-type": "application/json", accept: "application/json" },
+          body: JSON.stringify({ url }),
+        }),
+        RESOLVE_TIMEOUT_MS,
+      );
+      let data = null;
+      try { data = await res.json(); } catch { data = null; }
+      if (res.ok && data && data.ok && isHttpUrl(data.url)) return data;
+      const detail = (data && (data.detail || data.error)) || ("http-" + res.status);
+      throw new Error(detail);
+    }
+
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    /** Primary path: our own server (Render) via same-origin /x proxy. */
+    async function viaOwnServer(url, myGen) {
+      let id = null;
+      const t0 = Date.now();
+      while (!id && Date.now() - t0 < 90000) {
+        if (myGen !== resolveGen) throw new Error("cancel");
+        try {
+          const r = await withTimeout(fetch("/x/job", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url }) }), 45000);
+          if (r.ok) { const d = await r.json(); id = d.id; break; }
+          if (r.status === 400) throw new Error("invalid_url");
+        } catch (e) { if (String(e.message) === "invalid_url") throw e; }
+        setStatus("جاري تشغيل الخادم… لحظات");
+        await sleep(2500);
+      }
+      if (!id) throw new Error("server-fail");
+      const t1 = Date.now();
+      while (Date.now() - t1 < 600000) {
+        if (myGen !== resolveGen) throw new Error("cancel");
+        let j = null;
+        try { const r = await fetch("/x/job/" + id, { cache: "no-store" }); if (r.ok) j = await r.json(); } catch {}
+        if (j && j.state === "done") {
+          return { ok: true, title: j.title || null, author: j.author || null, thumbnail: j.thumbnail || null,
+            filename: guessFilename(j.title, j.ext || "mp4"), url: location.origin + "/x/file/" + id, formats: [], provider: "own" };
+        }
+        if (j && j.state === "error") throw new Error("resolve_failed");
+        if (j) setStatus("جاري الاستخراج… " + (j.progress || 0) + "%");
+        await sleep(1500);
+      }
+      throw new Error("timeout");
+    }
+
+    function canShareFiles() {
+      try {
+        return !!(navigator.share && navigator.canShare &&
+          navigator.canShare({ files: [new File(["x"], "t.mp4", { type: "video/mp4" })] }));
+      } catch {
+        return false;
+      }
+    }
+
+    async function fetchViaDl(fileUrl, filename, onProgress) {
+      const same = proxyUrl(fileUrl, filename || "video.mp4");
+      const ctrl = new AbortController();
+      const fetchTimer = setTimeout(() => ctrl.abort(), 900000);
+      try {
+        const res = await fetch(same, { signal: ctrl.signal });
+        if (!res.ok) throw new Error("http " + res.status);
+        const total = Number(res.headers.get("content-length") || 0);
+        if (total === 0 && res.headers.has("content-length")) throw new Error("empty");
+        if (!res.body || !res.body.getReader) {
+          const blob = await res.blob();
+          if (onProgress) onProgress(100);
+          if (!blob.size) throw new Error("empty");
+          const name = (filename && /\.mp4$/i.test(filename)) ? filename : ((filename || "video") + ".mp4");
+          return new File([blob], name, { type: blob.type || "video/mp4" });
+        }
+        const reader = res.body.getReader();
+        const chunks = [];
+        let received = 0;
+        const started = Date.now();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.byteLength;
+          if (received === 0 && Date.now() - started > 8000) {
+            try { reader.cancel(); } catch {}
+            throw new Error("empty");
+          }
+          if (onProgress) {
+            if (total > 0) onProgress((received / total) * 100);
+            else onProgress(Math.min(95, received / 50000));
+          }
+        }
+        if (onProgress) onProgress(100);
+        const blob = new Blob(chunks, { type: res.headers.get("content-type") || "video/mp4" });
+        if (!blob.size) throw new Error("empty");
+        const name = (filename && /\.mp4$/i.test(filename)) ? filename : ((filename || "video") + ".mp4");
+        return new File([blob], name, { type: blob.type || "video/mp4" });
+      } finally {
+        clearTimeout(fetchTimer);
+      }
+    }
+
+    function formatCandidates(data) {
+      const seen = new Set();
+      const list = [];
+      function add(url, label) {
+        if (!url || !isHttpUrl(url)) return;
+        if (seen.has(url)) return;
+        seen.add(url);
+        list.push({ url, label: label || "", filename: data.filename });
+      }
+      // Prefer ≤720 then lower, then higher — Edge /dl is more reliable under ~20MB
+      const formats = (data.formats || []).filter((f) => f && f.url && f.type !== "audio");
+      const scored = formats.map((f) => {
+        const h = f.height || parseHeight(f.label);
+        const score = h === 720 ? 3000 : h === 480 ? 2000 : h === 360 ? 1500 : h > 0 && h < 720 ? 1000 : h > 720 ? 500 : 100;
+        return { f, h, score };
+      }).sort((a, b) => b.score - a.score || b.h - a.h);
+      for (const { f } of scored) add(f.url, f.label);
+      add(data.url, "primary");
+      return list;
+    }
+
+    async function prepareFileAfterExtract(data) {
+      pendingShareFile = null;
+      saveBtn.style.display = "none";
+      setProgress(0);
+      setStatus("جاري التحميل 0%");
+      const candidates = formatCandidates(data);
+      let lastErr = "empty";
+      for (let i = 0; i < candidates.length; i++) {
+        const cand = candidates[i];
+        try {
+          const fname = cand.filename || data.filename || "video.mp4";
+          setStatus("جاري التحميل 0%");
+          const file = await fetchViaDl(cand.url, fname, (pct) => {
+            setProgress(pct);
+            setStatus("جاري التحميل " + Math.round(pct) + "%");
+          });
+          if (file.size > SHARE_MAX_BYTES) {
+            // Still keep it — share may fall back to download
+          }
+          pendingShareFile = file;
+          if (current) {
+            current.url = cand.url;
+            current.filename = file.name;
+          }
+          setProgress(100);
+          saveBtn.style.display = "";
+          saveBtn.disabled = false;
+          saveBtn.textContent = "حفظ الفيديو";
+          const mb = Math.max(0.1, Math.round(file.size / 1048576 * 10) / 10);
+          setStatus("اكتمل التحميل (" + mb + " MB). اضغط «حفظ الفيديو».", "ok");
+          return;
+        } catch (e) {
+          lastErr = String(e && e.message || e);
+          setProgress(0);
+        }
+      }
+      // One server re-resolve then retry download once
+      if (lastPageUrl) {
+        try {
+          setStatus("إعادة المحاولة عبر الخادم…");
+          const again = await resolveUrl(lastPageUrl);
+          const retryList = formatCandidates(again);
+          for (const cand of retryList.slice(0, 3)) {
+            try {
+              const file = await fetchViaDl(cand.url, again.filename || "video.mp4", (pct) => {
+                setProgress(pct);
+                setStatus("جاري التحميل " + Math.round(pct) + "%");
+              });
+              pendingShareFile = file;
+              if (current) {
+                current.url = cand.url;
+                current.filename = file.name;
+                current.title = again.title || current.title;
+              }
+              setProgress(100);
+              saveBtn.style.display = "";
+              saveBtn.disabled = false;
+              saveBtn.textContent = "حفظ الفيديو";
+              const mb = Math.max(0.1, Math.round(file.size / 1048576 * 10) / 10);
+              setStatus("اكتمل التحميل (" + mb + " MB). اضغط «حفظ الفيديو».", "ok");
+              return;
+            } catch (e) {
+              lastErr = String(e && e.message || e);
+            }
+          }
+        } catch (e) {
+          lastErr = String(e && e.message || e);
+        }
+      }
+      setProgress(null);
+      pendingShareFile = null;
+      saveBtn.style.display = "none";
+      setStatus(friendlyError(lastErr), "bad");
+    }
+
+    async function sharePreparedFile(file) {
+      if (!file) throw new Error("no-file");
+      if (!(navigator.share && navigator.canShare && navigator.canShare({ files: [file] }))) {
+        throw new Error("share-unsupported");
+      }
+      await navigator.share({ files: [file], title: (current && current.title) || "فيديو" });
+    }
+
+    function downloadBlobFile(file) {
+      const url = URL.createObjectURL(file);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = file.name || "video.mp4";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    }
+
+    async function saveToStudio() {
+      if (!pendingShareFile) {
+        setStatus("انتظر اكتمال التحميل أولاً.", "warn");
+        return;
+      }
+      const file = pendingShareFile;
+      saveBtn.disabled = true;
+      try {
+        if (canShareFiles() || (navigator.share && navigator.canShare && navigator.canShare({ files: [file] }))) {
+          await sharePreparedFile(file);
+          setStatus("تم — اختر «حفظ الفيديو» من قائمة المشاركة.", "ok");
+        } else {
+          downloadBlobFile(file);
+          setStatus("بدأ تنزيل الملف إلى جهازك.", "ok");
+        }
+      } catch (err) {
+        if (err && err.name === "AbortError") {
+          setStatus("تم إلغاء المشاركة. اضغط «حفظ الفيديو» مرة أخرى.");
+        } else if (canShareFiles()) {
+          setStatus("تعذّرت المشاركة. حاول مرة أخرى.", "bad");
+        } else {
+          try {
+            downloadBlobFile(file);
+            setStatus("بدأ تنزيل الملف إلى جهازك.", "ok");
+          } catch {
+            setStatus("تعذّر حفظ الملف.", "bad");
+          }
+        }
+      } finally {
+        saveBtn.disabled = false;
+      }
+    }
+
+    function showResolved(data) {
+      current = data;
+      pendingShareFile = null;
+      titleEl.textContent = data.title || "فيديو جاهز";
+      authorEl.textContent = data.author || "جاري تجهيز الملف…";
+      if (data.thumbnail) {
+        thumbEl.hidden = false;
+        thumbEl.src = data.thumbnail;
+      } else {
+        thumbEl.hidden = true;
+        thumbEl.removeAttribute("src");
+      }
+      saveBtn.style.display = "none";
+      resultEl.classList.add("show");
+      setStatus("تم الاستخراج — يبدأ التحميل…", "ok");
+      prepareFileAfterExtract(data);
+    }
+
+    async function onGo() {
+      const url = cleanUrl(urlInput.value);
+      if (url && url !== urlInput.value.trim()) urlInput.value = url;
+      if (!url || !isHttpUrl(url)) {
+        setStatus("الصق رابط مقطع صالح (YouTube / TikTok / Instagram / X).", "bad");
+        urlInput.focus();
+        return;
+      }
+      const myGen = ++resolveGen;
+      goBtn.disabled = true;
+      resultEl.classList.remove("show");
+      current = null;
+      pendingShareFile = null;
+      setProgress(null);
+      setStatus("جاري الاستخراج…");
+      goBtn.innerHTML = 'انتظر<span class="spinner"></span>';
+      try {
+        let data;
+        const isYT = /youtu\.?be/i.test(url);
+        const first = isYT ? () => resolveUrl(url) : () => viaOwnServer(url, myGen);
+        const second = isYT ? () => viaOwnServer(url, myGen) : () => resolveUrl(url);
+        try {
+          data = await first();
+        } catch (e1) {
+          if (myGen !== resolveGen) return;
+          if (String(e1 && e1.message) === "invalid_url") throw e1;
+          setStatus("جاري المحاولة بطريقة ثانية…");
+          data = await second();
+        }
+        if (myGen !== resolveGen) return;
+        data.pageUrl = url;
+        lastPageUrl = url;
+        showResolved(data);
+      } catch (e) {
+        if (myGen !== resolveGen) return;
+        setStatus(friendlyError(e && e.message), "bad");
+        resultEl.classList.add("show");
+        titleEl.textContent = "تعذّر الاستخراج";
+        authorEl.textContent = "الرابط قد يكون خاصاً أو الخدمة مشغولة — أعد المحاولة.";
+        thumbEl.hidden = true;
+        current = null;
+        saveBtn.style.display = "none";
+      } finally {
+        if (myGen === resolveGen) {
+          goBtn.disabled = false;
+          goBtn.textContent = "تحميل";
+        }
+      }
+    }
+
+    async function pasteAndGo() {
+      try {
+        let text = "";
+        if (navigator.clipboard && navigator.clipboard.readText) {
+          text = await navigator.clipboard.readText();
+        }
+        const cleaned = cleanUrl(text || urlInput.value);
+        if (!cleaned) {
+          setStatus("الصق الرابط في الخانة ثم اضغط تحميل (أو اسمح بالوصول للحافظة).", "warn");
+          urlInput.focus();
+          return;
+        }
+        urlInput.value = cleaned;
+        await onGo();
+      } catch {
+        setStatus("تعذّر قراءة الحافظة — الصق يدوياً في الخانة ثم اضغط تحميل.", "warn");
+        urlInput.focus();
+      }
+    }
+
+    goBtn.addEventListener("click", onGo);
+    pasteBtn.addEventListener("click", pasteAndGo);
+    saveBtn.addEventListener("click", saveToStudio);
+    urlInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") onGo();
+    });
+    urlInput.addEventListener("paste", (e) => {
+      const text = (e.clipboardData && e.clipboardData.getData("text")) || "";
+      const cleaned = cleanUrl(text);
+      if (!cleaned) return;
+      e.preventDefault();
+      urlInput.value = cleaned;
+      setTimeout(() => onGo(), 0);
+    });
+      try { fetch("/health", { cache: "no-store" }); setInterval(function(){ if (!document.hidden) fetch("/health", { cache: "no-store" }).catch(function(){}); }, 600000); } catch (e) {}
+  </script>
+</body>
+</html>
