@@ -27,6 +27,16 @@ def alt_source(url):
                         return best, {"title": (t.get("text") or "x-video")[:80], "thumbnail": v.get("thumbnail_url")}
             except Exception:
                 pass
+    m = re.search(r"instagram\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)", url)
+    if m:
+        try:
+            html = urllib.request.urlopen(urllib.request.Request(f"https://www.instagram.com/p/{m[1]}/embed/captioned/", headers={"User-Agent": UA}), timeout=20).read().decode("utf-8", "ignore")
+            mm = re.search(r'video_url\\*":\\*"(.*?)\\*"', html)
+            if mm:
+                v = mm[1].replace("\\", "").replace("u0026", "&")
+                return v, {"title": "instagram-" + m[1]}
+        except Exception:
+            pass
     if "tiktok.com" in url:
         try:
             d = getjson("https://www.tikwm.com/api/?hd=1&url=" + urllib.parse.quote(url, safe=""))["data"]
@@ -70,6 +80,19 @@ def cleanup():
                 JOBS.pop(jid, None)
                 BY_URL.pop(j["url"], None)
 
+def try_alt(j, url, d):
+    try:
+        u, meta = alt_source(url)
+        if u:
+            fp = os.path.join(d, "video.mp4")
+            fetch_to(u, fp)
+            if os.path.getsize(fp) > 1000:
+                j.update(state="done", progress=100, file=fp, size=os.path.getsize(fp), ext="mp4", **meta)
+                return True
+    except Exception as e:
+        j["alt_error"] = str(e)[:150]
+    return False
+
 def run(jid, url):
     j = JOBS[jid]
     d = os.path.join(WORK, jid)
@@ -82,7 +105,7 @@ def run(jid, url):
     base = {"outtmpl": os.path.join(d, "video.%(ext)s"), "quiet": True, "noplaylist": True,
             "merge_output_format": "mp4", "progress_hooks": [hook], "format": FMT,
             "socket_timeout": 20, "retries": 3, "concurrent_fragment_downloads": 4,
-            "http_headers": {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"}}
+            }
     variants = [{}]
     if "youtu" in url:
         variants = [{"extractor_args": {"youtube": {"player_client": [c]}}} for c in
@@ -90,6 +113,8 @@ def run(jid, url):
     with SEM:
         j["state"] = "running"
         err = None
+        if "youtu" not in url and try_alt(j, url, d):
+            return
         for v in variants:
             for f in glob.glob(os.path.join(d, "*")):
                 os.remove(f)
@@ -109,16 +134,8 @@ def run(jid, url):
                 return
             except Exception as e:
                 err = str(e)[:300]
-        try:
-            u, meta = alt_source(url)
-            if u:
-                fp = os.path.join(d, "video.mp4")
-                fetch_to(u, fp)
-                if os.path.getsize(fp) > 1000:
-                    j.update(state="done", progress=100, file=fp, size=os.path.getsize(fp), ext="mp4", **meta)
-                    return
-        except Exception as e:
-            err = (err or "") + " | alt: " + str(e)[:150]
+        if try_alt(j, url, d):
+            return
         j.update(state="error", error=err)
 
 @app.get("/health")
