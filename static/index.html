@@ -67,6 +67,17 @@
     .progress{display:none;margin-top:12px;height:12px;border-radius:999px;background:rgba(255,255,255,.07);overflow:hidden;border:1px solid rgba(255,255,255,.08)}
     .progress.show{display:block}
     .progress>span{display:block;height:100%;width:0%;background:linear-gradient(90deg,var(--accent),#a78bfa);transition:width .15s ease;box-shadow:0 0 14px rgba(34,211,238,.6)}
+
+    .section-title{margin:28px 0 12px;text-align:center;font-size:1.25rem;font-weight:700;letter-spacing:-.01em}
+    .section-title span{background:linear-gradient(90deg,#fff,#c7f5ff 55%,#ddd0ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+    .fmt-grid{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+    .fmt{appearance:none;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:var(--text);border-radius:999px;padding:8px 14px;font:inherit;font-size:.85rem;font-weight:600;cursor:pointer}
+    .fmt.active{background:linear-gradient(135deg,rgba(34,211,238,.25),rgba(139,92,246,.3));border-color:rgba(34,211,238,.55);box-shadow:0 0 0 3px rgba(34,211,238,.12)}
+    .fmt:disabled{opacity:.35;cursor:not-allowed}
+    .pick{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:22px 16px;border-radius:18px;border:1.5px dashed rgba(255,255,255,.18);background:rgba(0,0,0,.22);cursor:pointer;text-align:center;color:var(--muted);font-size:.92rem;line-height:1.5}
+    .pick strong{color:var(--text)}
+    .pick input{display:none}
+    .fname{margin-top:10px;font-size:.85rem;color:var(--muted);text-align:center;overflow-wrap:anywhere}
   </style>
 </head>
 <body>
@@ -115,6 +126,27 @@
         <li>بعد الاكتمال اضغط <strong>حفظ الفيديو</strong>.</li>
         <li>من قائمة المشاركة اختر <strong>حفظ الفيديو</strong> (آيفون) أو احفظ الملف (أندرويد).</li>
       </ol>
+    </div>
+
+
+    <h2 class="section-title"><span>تحويل الملفات</span></h2>
+    <div class="card" id="convertCard">
+      <label class="pick" for="cfile">
+        <strong>اختر ملفاً من جهازك</strong>
+        <span>فيديو · صوت · صورة · PDF · Word (حتى 100 ميجا)</span>
+        <input id="cfile" type="file" accept="video/*,audio/*,image/*,.heic,.heif,.pdf,.docx,.txt,.odt,.rtf,.gif,.webp" />
+      </label>
+      <div id="cfname" class="fname"></div>
+      <label style="margin-top:14px">الصيغة المطلوبة</label>
+      <div id="cformats" class="fmt-grid" aria-label="الصيغ المتاحة"></div>
+      <div class="row" style="margin-top:14px">
+        <button id="cgo" type="button" disabled>تحويل</button>
+      </div>
+      <div id="cstatus" class="status" role="status" aria-live="polite"></div>
+      <div id="cprogress" class="progress" aria-hidden="true"><span id="cprogressBar"></span></div>
+      <div class="actions" style="margin-top:10px">
+        <button id="csave" type="button" style="display:none">حفظ الملف</button>
+      </div>
     </div>
 
     <p class="foot">للاستخدام الشخصي فقط على محتوى مسموح لك بحفظه (روابط عامة). بدون تسجيل دخول.</p>
@@ -628,6 +660,147 @@
       urlInput.value = cleaned;
       setTimeout(() => onGo(), 0);
     });
+
+    // ——— تحويل الملفات (مستقل عن مسار التحميل) ———
+    const cfile = $("cfile");
+    const cfname = $("cfname");
+    const cformats = $("cformats");
+    const cgo = $("cgo");
+    const cstatus = $("cstatus");
+    const cprogress = $("cprogress");
+    const cprogressBar = $("cprogressBar");
+    const csave = $("csave");
+    let cPicked = null;
+    let cTarget = null;
+    let cPending = null;
+    const C_MAX = 100 * 1024 * 1024;
+    const C_MIME = {
+      mp4:"video/mp4", mov:"video/quicktime", webm:"video/webm", mkv:"video/x-matroska", avi:"video/x-msvideo",
+      gif:"image/gif", mp3:"audio/mpeg", m4a:"audio/mp4", wav:"audio/wav", ogg:"audio/ogg", aac:"audio/aac", flac:"audio/flac",
+      jpg:"image/jpeg", jpeg:"image/jpeg", png:"image/png", webp:"image/webp", pdf:"application/pdf",
+      docx:"application/vnd.openxmlformats-officedocument.wordprocessingml.document", txt:"text/plain"
+    };
+    const C_TARGETS = {
+      video:["mp4","mov","webm","mkv","avi","gif","mp3","m4a","wav"],
+      audio:["mp3","m4a","wav","ogg","aac","flac"],
+      image:["jpg","png","webp","gif","pdf"],
+      pdf:["png","jpg","docx"],
+      docx:["pdf","txt"],
+      txt:["pdf","docx"],
+      odt:["pdf","docx"],
+      rtf:["pdf","docx"]
+    };
+    function cKind(ext) {
+      ext = (ext||"").toLowerCase();
+      if (["mp4","mov","webm","mkv","avi","m4v"].includes(ext)) return "video";
+      if (["mp3","m4a","wav","ogg","aac","flac"].includes(ext)) return "audio";
+      if (["jpg","jpeg","png","webp","heic","heif","gif","bmp"].includes(ext)) return "image";
+      if (ext==="pdf") return "pdf";
+      if (ext==="docx") return "docx";
+      if (ext==="txt") return "txt";
+      if (ext==="odt") return "odt";
+      if (ext==="rtf") return "rtf";
+      return null;
+    }
+    function cExtOf(name) {
+      const m = String(name||"").toLowerCase().match(/\.([a-z0-9]+)$/);
+      let e = m ? m[1] : "";
+      if (e==="jpeg") e="jpg";
+      return e;
+    }
+    function setCStatus(t,k){ cstatus.textContent=t||""; cstatus.className="status"+(k?" "+k:""); }
+    function setCProgress(pct){
+      if (pct==null){ cprogress.classList.remove("show"); cprogressBar.style.width="0%"; return; }
+      cprogress.classList.add("show"); cprogressBar.style.width=Math.max(0,Math.min(100,Math.round(pct)))+"%";
+    }
+    function renderTargets(ext){
+      cformats.innerHTML=""; cTarget=null; cgo.disabled=true;
+      const k=cKind(ext); const list=(k?C_TARGETS[k]:[]).filter(t=>t!==ext);
+      if (!list.length){ setCStatus("هذا النوع غير مدعوم للتحويل.", "bad"); return; }
+      list.forEach(t=>{
+        const b=document.createElement("button");
+        b.type="button"; b.className="fmt"; b.textContent=t.toUpperCase(); b.dataset.fmt=t;
+        b.addEventListener("click",()=>{
+          [...cformats.querySelectorAll(".fmt")].forEach(x=>x.classList.remove("active"));
+          b.classList.add("active"); cTarget=t; cgo.disabled=!cPicked;
+        });
+        cformats.appendChild(b);
+      });
+      setCStatus("اختر الصيغة ثم اضغط تحويل.", null);
+    }
+    cfile.addEventListener("change",()=>{
+      cPending=null; csave.style.display="none"; setCProgress(null);
+      const f=cfile.files && cfile.files[0];
+      if (!f){ cPicked=null; cfname.textContent=""; cformats.innerHTML=""; cgo.disabled=true; return; }
+      if (f.size>C_MAX){ setCStatus("الملف أكبر من 100 ميجا. اختر ملفاً أصغر.", "bad"); cfile.value=""; cPicked=null; return; }
+      cPicked=f; cfname.textContent=f.name+" · "+Math.round(f.size/1024)+" ك.ب";
+      renderTargets(cExtOf(f.name));
+    });
+    function asShareFile(blob, ext, preferredName){
+      const mime=C_MIME[ext]||blob.type||"application/octet-stream";
+      let name=preferredName||("converted-"+Date.now().toString(36)+"."+ext);
+      if (ext==="mp4") name="video-"+Date.now().toString(36)+".mp4";
+      if (ext==="jpg"||ext==="jpeg") name="image-"+Date.now().toString(36)+".jpg";
+      if (ext==="png") name="image-"+Date.now().toString(36)+".png";
+      return new File([blob], name, {type: mime});
+    }
+    async function shareOrDownload(file){
+      try{
+        if (navigator.share && navigator.canShare && navigator.canShare({files:[file]})){
+          await navigator.share({files:[file]});
+          return;
+        }
+      }catch(e){ if (e && e.name==="AbortError") return; }
+      const a=document.createElement("a");
+      a.href=URL.createObjectURL(file); a.download=file.name; a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+    }
+    cgo.addEventListener("click", async ()=>{
+      if (!cPicked || !cTarget) return;
+      cgo.disabled=true; csave.style.display="none"; cPending=null;
+      setCStatus("جاري الرفع والتحويل…", "warn"); setCProgress(5);
+      try{
+        const fd=new FormData(); fd.append("file", cPicked, cPicked.name); fd.append("format", cTarget);
+        const up=await fetch("/c/job",{method:"POST", body:fd});
+        let j=null; try{j=await up.json();}catch{}
+        if (up.status===413 || (j&&j.detail==="too_large")) throw new Error("too_large");
+        if (up.status===429) throw new Error("busy");
+        if (!up.ok || !j || !j.id) throw new Error((j&&j.detail)||"upload");
+        const id=j.id;
+        for(let i=0;i<600;i++){
+          await new Promise(r=>setTimeout(r,1000));
+          const st=await fetch("/c/job/"+id).then(r=>r.json());
+          if (st.progress!=null) setCProgress(Math.max(10, st.progress));
+          if (st.state==="done"){
+            setCProgress(100);
+            const res=await fetch("/c/file/"+id);
+            if (!res.ok) throw new Error("download");
+            const blob=await res.blob();
+            const file=asShareFile(blob, cTarget);
+            cPending=file; csave.style.display="";
+            csave.textContent = (cTarget==="mp4"||cTarget==="mov") ? "حفظ الفيديو" :
+              (["jpg","png","gif","webp"].includes(cTarget) ? "حفظ الصورة" : "حفظ الملف");
+            setCStatus("تم التحويل ✓ — اضغط للحفظ.", "ok");
+            cgo.disabled=false; return;
+          }
+          if (st.state==="error") throw new Error(st.error||"convert");
+        }
+        throw new Error("timeout");
+      }catch(e){
+        const s=String(e&&e.message||e);
+        let msg="تعذّر التحويل. جرّب ملفاً أصغر أو صيغة أخرى.";
+        if (/too_large/i.test(s)) msg="الملف أكبر من 100 ميجا.";
+        if (/busy/i.test(s)) msg="الخادم مشغول الآن. أعد المحاولة بعد قليل.";
+        if (/unsupported/i.test(s)) msg="هذا التحويل غير مدعوم.";
+        setCStatus(msg, "bad"); setCProgress(null); cgo.disabled=false;
+      }
+    });
+    csave.addEventListener("click", async ()=>{
+      if (!cPending) return;
+      try{ await shareOrDownload(cPending); setCStatus("تم فتح المشاركة / التحميل.", "ok"); }
+      catch(e){ setCStatus("تعذّر الحفظ. جرّب مرة أخرى.", "bad"); }
+    });
+
     // Shortcut / Share Sheet: ?url= , ?u= , #url=
     (function autoFromLink() {
       try {
