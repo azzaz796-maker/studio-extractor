@@ -236,8 +236,8 @@ def dl(req: Request, u: str = "", filename: str = "video.mp4"):
         h.update(referer="https://www.youtube.com/", origin="https://www.youtube.com")
     try:
         up = urllib.request.urlopen(urllib.request.Request(u, headers=h), timeout=60)
-    except Exception:
-        return Response("upstream fetch failed", status_code=502)
+    except Exception as e:
+        return Response("upstream fetch failed: " + str(e)[:200], status_code=502)
     if not host_ok(urllib.parse.urlparse(up.geturl()).hostname):
         return Response("host not allowed", status_code=403)
     cl = up.headers.get("content-length")
