@@ -257,7 +257,7 @@ def dl(req: Request, u: str = "", filename: str = "video.mp4"):
                 yield b
         finally:
             up.close()
-    return StreamingResponse(gen(), status_code=up.status, media_type=up.headers.get("content-type") or "video/mp4", headers=oh)
+    return StreamingResponse(gen(), status_code=up.status, media_type="video/mp4", headers=oh)
 
 def create_job(url):
     cleanup()
@@ -292,8 +292,32 @@ def xfile(jid: str):
     j = JOBS.get(jid)
     if not j or j.get("state") != "done":
         raise HTTPException(404, "not ready")
-    return FileResponse(j["file"], media_type="video/mp4", filename="video." + j["ext"],
+    fp = ensure_mp4(j)
+    return FileResponse(fp, media_type="video/mp4", filename="video-" + jid[:8] + ".mp4",
                         headers={"cache-control": "no-store"})
+
+def _is_mp4(fp):
+    try:
+        with open(fp, "rb") as f:
+            return f.read(12)[4:8] == b"ftyp"
+    except Exception:
+        return False
+
+def ensure_mp4(j):
+    fp = j["file"]
+    if fp.endswith(".mp4") and _is_mp4(fp):
+        return fp
+    with LOCK:
+        out = os.path.join(os.path.dirname(fp), "remux.mp4")
+        if not (os.path.exists(out) and _is_mp4(out)):
+            import subprocess
+            r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", fp, "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy",
+                                "-movflags", "+faststart", out], timeout=300)
+            if r.returncode != 0 or not _is_mp4(out):
+                subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", fp, "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264",
+                                "-preset", "veryfast", "-c:a", "aac", "-movflags", "+faststart", out], timeout=600)
+        j.update(file=out, ext="mp4", size=os.path.getsize(out))
+        return out
 
 @app.get("/")
 def index():

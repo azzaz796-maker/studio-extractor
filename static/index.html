@@ -303,6 +303,18 @@
       }
     }
 
+    // iOS "Save Video" needs: real MP4 (ftyp), type video/mp4, short ASCII .mp4 name, files-only share.
+    async function toMp4File(blob) {
+      const head = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+      const tag = String.fromCharCode(head[4], head[5], head[6], head[7]);
+      if (tag !== "ftyp") throw new Error("notmp4");
+      return new File([blob], "video-" + Date.now().toString(36) + ".mp4", { type: "video/mp4" });
+    }
+    function asShareVideo(file) {
+      if (file.type === "video/mp4" && /^[A-Za-z0-9_-]{1,40}\.mp4$/.test(file.name)) return file;
+      return new File([file], "video-" + Date.now().toString(36) + ".mp4", { type: "video/mp4" });
+    }
+
     async function fetchViaDl(fileUrl, filename, onProgress) {
       const same = proxyUrl(fileUrl, filename || "video.mp4");
       const ctrl = new AbortController();
@@ -320,8 +332,7 @@
           const blob = await res.blob();
           if (onProgress) onProgress(100);
           if (!blob.size) throw new Error("empty");
-          const name = (filename && /\.mp4$/i.test(filename)) ? filename : ((filename || "video") + ".mp4");
-          return new File([blob], name, { type: blob.type || "video/mp4" });
+          return await toMp4File(blob);
         }
         const reader = res.body.getReader();
         const chunks = [];
@@ -350,8 +361,7 @@
         const blob = new Blob(chunks, { type: res.headers.get("content-type") || "video/mp4" });
         if (blob.size < 20000) throw new Error("empty");
         if (total > 0 && blob.size < total * 0.98) throw new Error("stall");
-        const name = (filename && /\.mp4$/i.test(filename)) ? filename : ((filename || "video") + ".mp4");
-        return new File([blob], name, { type: blob.type || "video/mp4" });
+        return await toMp4File(blob);
       } finally {
         clearTimeout(fetchTimer);
       }
@@ -461,10 +471,11 @@
 
     async function sharePreparedFile(file) {
       if (!file) throw new Error("no-file");
+      file = asShareVideo(file);
       if (!(navigator.share && navigator.canShare && navigator.canShare({ files: [file] }))) {
         throw new Error("share-unsupported");
       }
-      await navigator.share({ files: [file], title: (current && current.title) || "فيديو" });
+      await navigator.share({ files: [file] });
     }
 
     function downloadBlobFile(file) {
