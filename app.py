@@ -227,7 +227,7 @@ def dl(req: Request, u: str = "", filename: str = "video.mp4"):
     p = urllib.parse.urlparse(u)
     if p.scheme != "https" or not host_ok(p.hostname):
         return Response("host not allowed", status_code=403)
-    h = {"user-agent": req.headers.get("user-agent") or UA, "accept": "*/*"}
+    h = {"user-agent": DUA, "accept": "*/*"}
     if req.headers.get("range"): h["range"] = req.headers["range"]
     host = p.hostname.lower()
     if host.endswith("gendownload.com"):
