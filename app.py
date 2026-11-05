@@ -235,7 +235,7 @@ def dl(req: Request, u: str = "", filename: str = "video.mp4"):
     elif "googlevideo" in host or host.endswith("ytimg.com"):
         h.update(referer="https://www.youtube.com/", origin="https://www.youtube.com")
     try:
-        up = urllib.request.urlopen(urllib.request.Request(u, headers=h), timeout=60)
+        up = urllib.request.urlopen(urllib.request.Request(u, headers=h), timeout=20)
     except Exception as e:
         return Response("upstream fetch failed: " + str(e)[:200], status_code=502)
     if not host_ok(urllib.parse.urlparse(up.geturl()).hostname):
@@ -302,4 +302,9 @@ def index():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "ytdlp": yt_dlp.version.__version__}
+    pot = False
+    try:
+        urllib.request.urlopen("http://127.0.0.1:4416/ping", timeout=2); pot = True
+    except Exception:
+        pass
+    return {"ok": True, "ytdlp": yt_dlp.version.__version__, "pot": pot}

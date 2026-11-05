@@ -314,6 +314,7 @@
     function friendlyError(codeOrMsg) {
       const s = String(codeOrMsg || "");
       if (/timeout/i.test(s)) return "انتهت المهلة. تحقّق من الاتصال وأعد المحاولة.";
+      if (/stall|net/i.test(s)) return "توقّف التحميل من جميع المصادر. أعد المحاولة بعد قليل.";
       if (/invalid_url/i.test(s)) return "الصق رابط مقطع صالح يبدأ بـ https://";
       if (/resolve_failed|server-fail|all-failed/i.test(s)) {
         return "تعذّر استخراج الفيديو الآن. تأكد أن الرابط عام وأعد المحاولة.";
@@ -389,7 +390,11 @@
       const ctrl = new AbortController();
       const fetchTimer = setTimeout(() => ctrl.abort(), 900000);
       try {
-        const res = await fetch(same, { signal: ctrl.signal });
+        const hdrTimer = setTimeout(() => ctrl.abort(), 25000);
+        let res;
+        try { res = await fetch(same, { signal: ctrl.signal }); }
+        catch (e) { throw new Error(ctrl.signal.aborted ? "stall" : "net"); }
+        finally { clearTimeout(hdrTimer); }
         if (!res.ok) throw new Error("http " + res.status);
         const total = Number(res.headers.get("content-length") || 0);
         if (total === 0 && res.headers.has("content-length")) throw new Error("empty");
@@ -405,7 +410,12 @@
         let received = 0;
         const started = Date.now();
         while (true) {
-          const { done, value } = await reader.read();
+          const limit = received === 0 ? 15000 : 20000;
+          let wd;
+          const { done, value } = await Promise.race([
+            reader.read(),
+            new Promise((_, rej) => { wd = setTimeout(() => rej(new Error("stall")), limit); }),
+          ]).catch((e) => { try { reader.cancel(); } catch {} try { ctrl.abort(); } catch {} throw e; }).finally(() => clearTimeout(wd));
           if (done) break;
           chunks.push(value);
           received += value.byteLength;
@@ -420,7 +430,8 @@
         }
         if (onProgress) onProgress(100);
         const blob = new Blob(chunks, { type: res.headers.get("content-type") || "video/mp4" });
-        if (!blob.size) throw new Error("empty");
+        if (blob.size < 20000) throw new Error("empty");
+        if (total > 0 && blob.size < total * 0.98) throw new Error("stall");
         const name = (filename && /\.mp4$/i.test(filename)) ? filename : ((filename || "video") + ".mp4");
         return new File([blob], name, { type: blob.type || "video/mp4" });
       } finally {
@@ -456,8 +467,13 @@
       setStatus("جاري التحميل 0%");
       const candidates = formatCandidates(data);
       let lastErr = "empty";
+      const hostFails = {};
       for (let i = 0; i < candidates.length; i++) {
         const cand = candidates[i];
+        let hk = "";
+        try { hk = new URL(cand.url, location.href).hostname; } catch {}
+        if ((hostFails[hk] || 0) >= 2) continue;
+        if (i > 0) setStatus("جاري تجربة مصدر آخر…");
         try {
           const fname = cand.filename || data.filename || "video.mp4";
           setStatus("جاري التحميل 0%");
@@ -482,16 +498,17 @@
           return;
         } catch (e) {
           lastErr = String(e && e.message || e);
+          hostFails[hk] = (hostFails[hk] || 0) + 1;
           setProgress(0);
         }
       }
-      // One server re-resolve then retry download once
-      if (lastPageUrl) {
+      // Fallback: let our own server download it, then fetch same-origin file
+      if (lastPageUrl && data.provider !== "own") {
         try {
-          setStatus("إعادة المحاولة عبر الخادم…");
-          const again = await resolveUrl(lastPageUrl);
+          setStatus("جاري المحاولة عبر الخادم…");
+          const again = await viaOwnServer(lastPageUrl, resolveGen);
           const retryList = formatCandidates(again);
-          for (const cand of retryList.slice(0, 3)) {
+          for (const cand of retryList.slice(0, 1)) {
             try {
               const file = await fetchViaDl(cand.url, again.filename || "video.mp4", (pct) => {
                 setProgress(pct);
