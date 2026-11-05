@@ -624,6 +624,20 @@
       urlInput.value = cleaned;
       setTimeout(() => onGo(), 0);
     });
+    // Shortcut / Share Sheet: ?url= , ?u= , #url=
+    (function autoFromLink() {
+      try {
+        const qs = new URLSearchParams(location.search);
+        const hs = new URLSearchParams(location.hash.replace(/^#/, ""));
+        const raw = qs.get("url") || qs.get("u") || hs.get("url") || hs.get("u") || "";
+        if (!raw) return;
+        try { history.replaceState(null, "", location.pathname); } catch (e) {}
+        const cleaned = cleanUrl(raw);
+        if (!cleaned) { urlInput.value = raw; setStatus("الرابط المُرسل غير صالح.", "bad"); return; }
+        urlInput.value = cleaned;
+        setTimeout(() => onGo(), 0);
+      } catch (e) {}
+    })();
       try { fetch("/health", { cache: "no-store" }); setInterval(function(){ if (!document.hidden) fetch("/health", { cache: "no-store" }).catch(function(){}); }, 600000); } catch (e) {}
   </script>
 </body>
