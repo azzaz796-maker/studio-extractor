@@ -2,6 +2,7 @@ import os, urllib.parse, uuid, time, threading, glob, shutil, hashlib
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 import yt_dlp, re, json, urllib.request
+from convert import create_job as c_create, CJOBS, cleanup_c, targets_for, MIME as CMIME, MAX_UPLOAD, _have_soffice
 
 UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
 
@@ -318,6 +319,59 @@ def ensure_mp4(j):
                                 "-preset", "veryfast", "-c:a", "aac", "-movflags", "+faststart", out], timeout=600)
         j.update(file=out, ext="mp4", size=os.path.getsize(out))
         return out
+
+
+@app.post("/c/job")
+async def cjob(req: Request):
+    cleanup_c()
+    form = await req.form()
+    f = form.get("file")
+    dst = (form.get("format") or form.get("to") or "").strip().lower()
+    if not f or not hasattr(f, "read"):
+        raise HTTPException(400, "no_file")
+    data = await f.read()
+    if len(data) > MAX_UPLOAD:
+        raise HTTPException(413, "too_large")
+    if not data:
+        raise HTTPException(400, "empty")
+    name = getattr(f, "filename", None) or "file.bin"
+    import tempfile
+    fd, tmp = tempfile.mkstemp(prefix="cup_")
+    os.close(fd)
+    try:
+        open(tmp, "wb").write(data)
+        jid = c_create(tmp, name, dst, len(data))
+    except ValueError as e:
+        try: os.remove(tmp)
+        except Exception: pass
+        code = str(e)
+        raise HTTPException(429 if code == "busy" else 400, code)
+    except Exception:
+        try: os.remove(tmp)
+        except Exception: pass
+        raise
+    return {"id": jid}
+
+@app.get("/c/job/{jid}")
+def cstatus(jid: str):
+    j = CJOBS.get(jid)
+    if not j:
+        raise HTTPException(404, "no job")
+    return {k: v for k, v in j.items() if k not in ("file", "infile", "dir")}
+
+@app.get("/c/file/{jid}")
+def cfile(jid: str):
+    j = CJOBS.get(jid)
+    if not j or j.get("state") != "done":
+        raise HTTPException(404, "not ready")
+    mt = j.get("mime") or "application/octet-stream"
+    fn = j.get("filename") or ("converted." + j.get("dst_ext", "bin"))
+    return FileResponse(j["file"], media_type=mt, filename=fn,
+                        headers={"cache-control": "no-store"})
+
+@app.get("/c/targets")
+def ctargets(ext: str = ""):
+    return {"targets": targets_for(ext), "libreoffice": bool(_have_soffice()), "max_bytes": MAX_UPLOAD}
 
 @app.get("/")
 def index():
