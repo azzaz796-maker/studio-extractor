@@ -169,6 +169,26 @@ def gendownload(url):
             "filename": re.sub(r"[^\w\s.-]+", "", title).strip()[:80] + ".mp4" if re.sub(r"[^\w\s.-]+", "", title).strip() else "video.mp4",
             "url": best["url"], "formats": fmts, "provider": "gendownload", "estimatedSize": best.get("filesize")}
 
+COBALT = ["https://rue-cobalt.xenon.zone/", "https://cobaltapi.cjs.nz/"]
+def cobalt(url):
+    for inst in COBALT:
+        try:
+            r = urllib.request.urlopen(urllib.request.Request(inst, data=json.dumps({"url": url, "videoQuality": "720"}).encode(),
+                headers={"content-type": "application/json", "accept": "application/json", "user-agent": DUA}), timeout=20)
+            d = json.loads(r.read())
+            u = d.get("url")
+            if d.get("status") not in ("tunnel", "redirect") or not u:
+                continue
+            pr = urllib.request.urlopen(urllib.request.Request(u, headers={"range": "bytes=0-2047", "user-agent": DUA}), timeout=40)
+            if not pr.read(2048):
+                continue
+            fn = d.get("filename") or "video.mp4"
+            return {"ok": True, "title": fn.rsplit(".", 1)[0], "filename": "video.mp4", "url": u, "formats": [],
+                    "provider": "cobalt", "estimatedSize": None, "thumbnail": None}
+        except Exception:
+            pass
+    return None
+
 @app.post("/api/resolve")
 async def resolve(req: Request):
     try:
@@ -182,13 +202,14 @@ async def resolve(req: Request):
     if m:
         url = "https://www.youtube.com/watch?v=" + m[1]
     t0 = time.time()
-    while time.time() - t0 < 80:
-        try:
-            r = await asyncio.wait_for(asyncio.to_thread(gendownload, url), 30)
-            if r:
-                return r
-        except Exception:
-            pass
+    while time.time() - t0 < 60:
+        for fn, to in ((cobalt, 45), (gendownload, 30)):
+            try:
+                r = await asyncio.wait_for(asyncio.to_thread(fn, url), to)
+                if r:
+                    return r
+            except Exception:
+                pass
         await asyncio.sleep(1)
     if "youtu" not in url:
         try:
