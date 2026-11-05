@@ -300,6 +300,38 @@ def index():
     return FileResponse(os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "index.html"),
                         media_type="text/html; charset=utf-8", headers={"cache-control": "no-cache"})
 
+_S = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+_ICONS = {"icon.svg": "image/svg+xml", "icon-32.png": "image/png", "icon-180.png": "image/png", "icon-192.png": "image/png", "icon-512.png": "image/png"}
+
+def _icon(name):
+    from fastapi.responses import Response
+    import base64
+    from icons_data import ICONS
+    if name == "icon.svg":
+        data = open(os.path.join(_S, "icons", "icon.svg"), "rb").read()
+    else:
+        data = base64.b64decode(ICONS[name])
+    return Response(data, media_type=_ICONS[name], headers={"cache-control": "public, max-age=86400"})
+
+@app.get("/icons/{name}")
+def icons(name: str):
+    if name not in _ICONS:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return _icon(name)
+
+@app.get("/favicon.ico")
+def favicon():
+    return _icon("icon-32.png")
+
+@app.get("/apple-touch-icon.png")
+@app.get("/apple-touch-icon-precomposed.png")
+def apple_icon():
+    return _icon("icon-180.png")
+
+@app.get("/manifest.webmanifest")
+def manifest():
+    return FileResponse(os.path.join(_S, "manifest.webmanifest"), media_type="application/manifest+json")
+
 @app.get("/health")
 def health():
     pot = False
