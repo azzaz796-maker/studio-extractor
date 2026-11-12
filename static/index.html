@@ -172,7 +172,7 @@
       <div class="actions" style="margin-top:10px">
         <button id="esave" type="button" style="display:none">حفظ الفيديو</button>
       </div>
-      <p class="fname" style="line-height:1.8;margin-top:14px">ملاحظة: التحسين يزيد الحدّة والوضوح ويقلّل التشويش، لكنه ما يخترع تفاصيل مو موجودة في الأصل. أقصى مدة: دقيقة واحدة إذا كانت النتيجة 1080p، ودقيقتين إذا كانت 720p أو أقل. المعالجة تاخذ تقريباً 7 إلى 12 ضعف مدة المقطع (مقطع دقيقة ≈ 7–12 دقيقة)، فخلّ الصفحة مفتوحة.</p>
+      <p class="fname" style="line-height:1.8;margin-top:14px">ملاحظة: التحسين يزيد الحدّة والوضوح ويقلّل التشويش، لكنه ما يخترع تفاصيل مو موجودة في الأصل. أقصى مدة 30 دقيقة وأقصى حجم 800 ميجا. المقاطع لين دقيقة تتحسن بأعلى جودة (حتى 1080p) وتاخذ وقت أطول نسبياً، والأطول من دقيقة تتحسن بالوضع السريع بحد أقصى 720p. الفيديو الطويل ياخذ تقريباً ٣ أضعاف مدته (مقطع 10 دقائق ≈ 30 دقيقة)، أما فيديوهات الجوال بدقة 1080p فتاخذ تقريباً ٧ أضعاف، ومقاطع 4K حدها 5 دقائق. خلّ الصفحة مفتوحة، ولو قفلتها ورجعت بنفس الجهاز نكمل المتابعة.</p>
     </div>
 
     <p class="foot">للاستخدام الشخصي فقط على محتوى مسموح لك بحفظه (روابط عامة). بدون تسجيل دخول.</p>
@@ -892,22 +892,30 @@
       if (!eW||!eH) return E_TGT[eQ]||720;
       const sh=Math.min(eW,eH); let t=Math.min(E_TGT[eQ]||sh, sh*2, 1080);
       if (sh>=t) t=Math.min(sh, eQ==="hd720"?720:1080);
-      return t;
+      return eFast() ? Math.min(t, 720) : t;
     }
-    function eLimit(){ return eOutShort()>720 ? 60 : 120; }
+    const E_MAX_DUR=30*60, E_HQ_MAX=60;
+    function eFast(){ return eDur > E_HQ_MAX; }
+    function eUHD(){ return eW && eH && Math.min(eW,eH) > 1080; }
+    function eLimit(){ return eUHD() ? 5*60 : E_MAX_DUR; }
+    function eCost(){ const sh=Math.min(eW||640,eH||360); return sh<=720 ? 3 : (sh<=1080 ? 7 : 25); }
     function setEStatus(t,k){ estatus.textContent=t||""; estatus.className="status"+(k?" "+k:""); }
     function setEProgress(p){
       if (p==null){ eprogress.classList.remove("show"); eprogressBar.style.width="0%"; return; }
       eprogress.classList.add("show"); eprogressBar.style.width=Math.max(0,Math.min(100,Math.round(p)))+"%";
     }
-    function fmtSec(n){ n=Math.max(0,Math.round(n)); const m=Math.floor(n/60), x=n%60; return m? (m+" د "+x+" ث") : (x+" ث"); }
+    function fmtSec(n){ n=Math.max(0,Math.round(n)); const h=Math.floor(n/3600), m=Math.floor((n%3600)/60), x=n%60;
+      if (h) return h+" س "+m+" د"; return m? (m+" د "+x+" ث") : (x+" ث"); }
     function eTooLong(){ return eDur && eDur > eLimit()+1; }
     function eCheck(){
       ego.disabled=!ePicked;
       if (!ePicked) return;
       if (eTooLong()){
-        setEStatus("المقطع مدته "+fmtSec(eDur)+" وهذا أطول من الحد ("+fmtSec(eLimit())+") لهذي الجودة. قصّ المقطع أو اختر 720p.", "bad");
+        setEStatus((eUHD() ? "مقاطع 4K حدها 5 دقائق (المعالجة بطيئة جداً على الخادم). المقطع مدته "+fmtSec(eDur)+"؛ قصّه أو صوّره بدقة 1080p."
+          : "المقطع مدته "+fmtSec(eDur)+" وهذا أطول من الحد (30 دقيقة). قصّ المقطع وجرّب مرة ثانية."), "bad");
         ego.disabled=true;
+      } else if (eFast()){
+        setEStatus("المقطع أطول من دقيقة، فبيتحسن بالوضع السريع وبحد أقصى 720p. الوقت المتوقع تقريباً "+fmtSec(eDur*eCost())+".", "warn");
       } else setEStatus("اختر الجودة ثم اضغط «تحسين الجودة».", null);
     }
     [...eopts.querySelectorAll(".fmt")].forEach(b=>b.addEventListener("click",()=>{
@@ -937,18 +945,41 @@
       setEStatus("جاري الرفع… 0%", "warn"); setEProgress(2);
       try{
         const id=await uploadChunked(ePicked, eQ, (pct)=>{ setEStatus("جاري الرفع… "+pct+"%", "warn"); setEProgress(Math.max(2, pct*0.3)); });
+        try{ localStorage.setItem("enhJob", JSON.stringify({id, t:Date.now()})); }catch(e){}
+        await ePoll(id);
+        try{ localStorage.removeItem("enhJob"); }catch(e){}
+        ego.disabled=false;
+      }catch(e){ eFail(e); }
+    });
+    function eFail(e){
+        try{ localStorage.removeItem("enhJob"); }catch(_){}
+        const s=String(e&&e.message||e);
+        let msg="تعذّر تحسين الفيديو. جرّب مقطعاً أقصر أو جودة 720p.";
+        if (/too_long/i.test(s)) msg="المقطع أطول من الحد (30 دقيقة، أو 5 دقائق لمقاطع 4K). قصّه وجرّب مرة ثانية.";
+        if (/too_large/i.test(s)) msg="الفيديو أكبر من 800 ميجا.";
+        if (/no_space/i.test(s)) msg="لا توجد مساحة كافية على الخادم الآن. جرّب لاحقاً.";
+        if (/busy/i.test(s)) msg="الخادم مشغول الآن. أعد المحاولة بعد قليل.";
+        if (/not_video|unsupported/i.test(s)) msg="هذا الملف مو فيديو مدعوم. جرّب MP4 أو MOV.";
+        if (/timeout/i.test(s)) msg="أخذ التحسين وقت طويل وتوقف. جرّب مقطعاً أقصر أو 720p.";
+        if (/incomplete|chunk/i.test(s)) msg="فشل رفع جزء من الفيديو. أعد المحاولة.";
+        if (/gone/i.test(s)) msg="انتهت صلاحية الطلب على الخادم (أو أُعيد تشغيله). ارفع الفيديو مرة ثانية.";
+        setEStatus(msg, "bad"); setEProgress(null); ego.disabled=!ePicked;
+    }
+    async function ePoll(id){
         setEStatus("جاري تحسين الجودة… خلّ الصفحة مفتوحة", "warn"); setEProgress(30);
-        const t0=Date.now();
-        while (Date.now()-t0 < 60*60*1000){
+        const t0=Date.now(); let miss=0;
+        while (Date.now()-t0 < 6*60*60*1000){
           await new Promise(r=>setTimeout(r,2000));
           let st=null;
-          try{ st=await fetch("/c/job/"+id, {cache:"no-store"}).then(r=>r.ok?r.json():null); }catch(e){}
+          try{ const r=await fetch("/c/job/"+id, {cache:"no-store"});
+            if (r.status===404){ if (++miss>=3) throw new Error("gone"); continue; }
+            st=r.ok?await r.json():null; miss=0; }catch(e){ if (String(e&&e.message)==="gone") throw e; }
           if (!st) continue;
           if (st.state==="queued"){ setEStatus("بالانتظار… فيه طلب قبلك، بيبدأ بعده تلقائياً", "warn"); continue; }
           if (st.state==="running"){
             const p=st.progress||0; setEProgress(30+p*0.68);
             let t="جاري تحسين الجودة… "+p+"%";
-            if (st.out_w) t+=" ("+st.src_w+"×"+st.src_h+" ← "+st.out_w+"×"+st.out_h+")";
+            if (st.out_w) t+=" ("+st.src_w+"×"+st.src_h+" ← "+st.out_w+"×"+st.out_h+(st.mode==="fast"?"، سريع":"")+")";
             if (st.eta!=null && p>12) t+=" · باقي تقريباً "+fmtSec(st.eta);
             setEStatus(t, "warn"); continue;
           }
@@ -967,23 +998,20 @@
               esave.textContent="حفظ الفيديو"; esave.style.display="";
               setEStatus("تم التحسين ✓"+dims+" — اضغط «حفظ الفيديو».", "ok");
             }
-            ego.disabled=false; return;
+            return;
           }
         }
         throw new Error("timeout");
-      }catch(e){
-        const s=String(e&&e.message||e);
-        let msg="تعذّر تحسين الفيديو. جرّب مقطعاً أقصر أو جودة 720p.";
-        if (/too_long/i.test(s)) msg="المقطع أطول من الحد المسموح ("+fmtSec(eLimit())+"). قصّه وجرّب مرة ثانية.";
-        if (/too_large/i.test(s)) msg="الفيديو أكبر من 800 ميجا.";
-        if (/no_space/i.test(s)) msg="لا توجد مساحة كافية على الخادم الآن. جرّب لاحقاً.";
-        if (/busy/i.test(s)) msg="الخادم مشغول الآن. أعد المحاولة بعد قليل.";
-        if (/not_video|unsupported/i.test(s)) msg="هذا الملف مو فيديو مدعوم. جرّب MP4 أو MOV.";
-        if (/timeout/i.test(s)) msg="أخذ التحسين وقت طويل وتوقف. جرّب مقطعاً أقصر أو 720p.";
-        if (/incomplete|chunk/i.test(s)) msg="فشل رفع جزء من الفيديو. أعد المحاولة.";
-        setEStatus(msg, "bad"); setEProgress(null); ego.disabled=false;
-      }
-    });
+    }
+    // resume a long job after Safari reloads the tab
+    (function eResume(){
+      try{
+        const j=JSON.parse(localStorage.getItem("enhJob")||"null");
+        if (!j || !j.id || Date.now()-j.t > 6*60*60*1000) return;
+        setEStatus("نكمل متابعة طلب التحسين السابق…", "warn"); setEProgress(30);
+        ePoll(j.id).then(()=>{ try{ localStorage.removeItem("enhJob"); }catch(e){} }).catch(eFail);
+      }catch(e){}
+    })();
     esave.addEventListener("click", async ()=>{
       if (eUrl && !ePending){
         const a=document.createElement("a"); a.href=eUrl; a.download=""; a.rel="noopener"; a.click();
