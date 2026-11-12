@@ -60,14 +60,39 @@ def targets_for(ext):
 
 # ——— video enhancement (ffmpeg only; free-tier CPU) ———
 ENH = {"hd720": 720, "hd1080": 1080, "hdsame": 0}
-# measured on Render free: ~6.5x realtime for 720p output, ~12x for 1080p output
-ENH_MAX_SEC = {"hd720": 120, "hd1080": 60, "hdsame": 120}
+ENH_MAX_DUR = 30 * 60          # 30 minutes, all qualities
+ENH_HQ_MAX = 60                # clips <= 60 s use the high-quality pipeline
+ENH_MAX_DUR_UHD = 5 * 60      # sources above 1080p (4K) decode ~4x slower on free tier
+ENH_MAX_SEC = {k: ENH_MAX_DUR for k in ENH}   # kept for /c/targets
+HDR_TRC = ("arib-std-b67", "smpte2084")
+
+
+def _cost(info):
+    """Rough seconds of work per second of video on Render free (measured)."""
+    short = min(info["w"], info["h"])
+    f = 4 if short <= 720 else (9 if short <= 1080 else 30)
+    if (info.get("fps") or 30) > 31:
+        f *= 1.6
+    return f
+
+
+def is_long(info):
+    return (info.get("dur") or 0) > ENH_HQ_MAX
+
+
+def is_fast(info):
+    # HQ (denoise + lanczos + veryfast) only for short low-res clips; HD phone footage is
+    # too heavy to decode/filter on the free tier, so it always uses the fast pipeline.
+    return is_long(info) or min(info["w"], info["h"]) > 720
 
 
 def enh_limit(info, choice):
-    ow, oh = enh_plan(info, choice)
-    return 60 if min(ow, oh) > 720 else 120
-ENH_TIMEOUT = 45 * 60
+    return ENH_MAX_DUR_UHD if min(info["w"], info["h"]) > 1080 else ENH_MAX_DUR
+
+
+def enh_timeout(info):
+    # ~2x the expected work time + 15 min margin
+    return int(max(45 * 60, (info.get("dur") or 60) * _cost(info) * 2 + 15 * 60))
 
 
 def is_enh(dst):
@@ -103,52 +128,98 @@ def probe_video(path):
 
 
 def enh_plan(info, choice):
-    """Return (out_w, out_h) on the short side target; never > 2x source or 1080."""
+    """Output size on the short side: never > 2x source, never > 1080, and <= 720 in fast mode."""
     w, h = info["w"], info["h"]
     short = min(w, h)
+    cap = 720 if is_long(info) else 1080
     want = ENH.get(choice, 0) or short
-    tgt = min(want, short * 2, 1080)
+    tgt = min(want, short * 2, cap)
     if short >= tgt:
-        # no upscale; shrink only >1080 (or >720 when the user picked 720p, the fast option)
-        tgt = min(short, 720 if choice == "hd720" else 1080)
+        # no upscale; shrink only above the cap (or above 720 when 720p was picked)
+        tgt = min(short, 720 if choice == "hd720" else cap)
     k = tgt / float(short)
     ow = int(round(w * k / 2)) * 2
     oh = int(round(h * k / 2)) * 2
     return max(2, ow), max(2, oh)
 
 
-def enhance_video(inp, out, choice, job=None):
-    info = probe_video(inp)
-    ow, oh = enh_plan(info, choice)
+def _tonemap(size=None):
+    rs = f":w={size[0]}:h={size[1]}:f=bicubic" if size else ""
+    return ("zscale=t=linear:npl=100" + rs + ",format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,"
+            "zscale=t=bt709:m=bt709:r=tv,format=yuv420p")
+
+
+def enh_filters(info, ow, oh, fast):
     up = max(ow, oh) > max(info["w"], info["h"])
+    same = (ow, oh) == (info["w"], info["h"])
+    hdr = info["trc"] in HDR_TRC
     vf = []
-    if info["trc"] in ("arib-std-b67", "smpte2084"):
-        # iPhone HDR → SDR so colours are not washed out
-        vf.append("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,"
-                  "zscale=t=bt709:m=bt709:r=tv")
     if info["fps"] > 31:
         vf.append("fps=30")
-    vf.append("hqdn3d=1.5:1.5:6:6")
-    vf.append(f"scale={ow}:{oh}:flags=lanczos")
-    vf.append("unsharp=5:5:0.9:5:5:0.0" if up else "unsharp=5:5:0.6:5:5:0.0")
-    vf.append("eq=contrast=1.04:saturation=1.10")
-    vf.append("format=yuv420p")
+    pq = info["trc"] == "smpte2084"
+    hlg = hdr and not pq
+    tag = "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709"
+    if not fast:
+        if pq:
+            vf.append(_tonemap())
+        cm0 = ":in_color_matrix=bt2020:out_color_matrix=bt709" if hlg else ""
+        vf += ["hqdn3d=1.5:1.5:6:6", f"scale={ow}:{oh}:flags=lanczos{cm0}",
+               "unsharp=5:5:0.9:5:5:0.0" if up else "unsharp=5:5:0.6:5:5:0.0",
+               "eq=contrast=1.04:saturation=1.12" if hdr else "eq=contrast=1.04:saturation=1.10",
+               "format=yuv420p", tag]
+        return vf
+    # fast: sharpen/colour at the smaller of source/output size, bicubic resize.
+    # HLG (iPhone HDR) is SDR-compatible → cheap matrix conversion instead of float tone-mapping.
+    look = ["unsharp=3:3:0.7:3:3:0.0" if up else "unsharp=3:3:0.5:3:3:0.0",
+            "eq=contrast=1.04:saturation=1.12" if hdr else "eq=contrast=1.04:saturation=1.10"]
+    cm = ":in_color_matrix=bt2020:out_color_matrix=bt709" if hdr else ""
+    if up or same:
+        if pq:
+            vf.append(_tonemap())
+        elif hdr:
+            vf.append(f"scale={ow}:{oh}:flags=bicubic{cm}"); cm = None
+        vf += look
+        if not same and cm is not None:
+            vf.append(f"scale={ow}:{oh}:flags=bicubic")
+    else:  # downscale first (cheaper)
+        vf.append(_tonemap((ow, oh)) if pq else f"scale={ow}:{oh}:flags=bicubic{cm},format=yuv420p")
+        vf += look
+    vf += ["format=yuv420p", tag]
+    return vf
+
+
+def enhance_video(inp, out, choice, job=None):
+    info = probe_video(inp)
+    fast = is_fast(info)
+    ow, oh = enh_plan(info, choice)
     dur = info["dur"] or 1.0
+    limit = enh_timeout(info)
+    vf = enh_filters(info, ow, oh, fast)
+    mr = "4M" if min(ow, oh) <= 720 else "6M"
+    venc = (["-preset", "superfast", "-crf", "22", "-maxrate", mr, "-bufsize", str(int(mr[:-1]) * 2) + "M"] if fast
+            else ["-preset", "veryfast", "-crf", "19"])
 
     def attempt(filters):
         cmd = ["ffmpeg", "-y", "-v", "error", "-nostats", "-progress", "pipe:1", "-threads", "1", "-i", inp,
                "-map", "0:v:0", "-map", "0:a:0?", "-vf", ",".join(filters),
-               "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-profile:v", "high",
-               "-pix_fmt", "yuv420p", "-threads", "1", "-c:a", "aac", "-b:a", "160k", "-ac", "2",
+               "-c:v", "libx264", *venc, "-profile:v", "high",
+               "-pix_fmt", "yuv420p", "-threads", "1", "-c:a", "aac", "-b:a", "128k" if fast else "160k",
+               "-ac", "2", "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
                "-movflags", "+faststart", "-map_metadata", "-1", "-tag:v", "avc1", out]
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         t0 = time.time()
         import threading as _t
         errbuf = []
+        killed = []
         _t.Thread(target=lambda: errbuf.append(p.stderr.read()), daemon=True).start()
+
+        def watchdog():
+            while p.poll() is None:
+                if time.time() - t0 > limit:
+                    killed.append(1); p.kill(); return
+                time.sleep(5)
+        _t.Thread(target=watchdog, daemon=True).start()
         for line in p.stdout:
-            if time.time() - t0 > ENH_TIMEOUT:
-                p.kill(); raise RuntimeError("timeout")
             line = line.decode("utf-8", "ignore").strip()
             if line.startswith("out_time_us=") or line.startswith("out_time_ms="):
                 try:
@@ -160,18 +231,27 @@ def enhance_video(inp, out, choice, job=None):
                     el = time.time() - t0
                     job["progress"] = int(10 + frac * 85)
                     job["eta"] = int(el / frac - el) if frac > 0.02 else None
+                    job["speed"] = round(el / sec, 2)  # seconds of work per second of video
+                    job["at"] = time.time()
         p.wait()
+        if killed:
+            raise RuntimeError("timeout")
         if p.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) == 0:
             raise RuntimeError((b"".join(errbuf) or b"ffmpeg failed").decode("utf-8", "ignore")[-400:])
 
     if job is not None:
-        job.update(src_w=info["w"], src_h=info["h"], out_w=ow, out_h=oh, duration=round(dur, 1))
+        job.update(src_w=info["w"], src_h=info["h"], out_w=ow, out_h=oh, duration=round(dur, 1),
+                   mode="fast" if fast else "hq")
     try:
         attempt(vf)
     except RuntimeError as e:
-        if str(e) == "timeout" or not vf[0].startswith("zscale"):
+        if str(e) == "timeout" or info["trc"] not in HDR_TRC:
             raise
-        attempt(vf[1:])  # zscale unavailable → plain path
+        # zscale unavailable → plain path without tone-mapping
+        plain = [f for f in vf if "zscale" not in f]
+        if not any(f.startswith("scale=") for f in plain) and (ow, oh) != (info["w"], info["h"]):
+            plain.insert(0, f"scale={ow}:{oh}:flags=bicubic")
+        attempt(plain)
     return out
 
 
@@ -187,6 +267,8 @@ def cleanup_c():
     now = time.time()
     with CLOCK:
         for jid, j in list(CJOBS.items()):
+            if j.get("state") in ("queued", "running"):
+                continue  # never delete while waiting/working; "at" is reset when done
             if now - j.get("at", 0) > TTL:
                 d = j.get("dir")
                 if d and os.path.isdir(d):
