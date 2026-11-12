@@ -58,6 +58,116 @@ def targets_for(ext):
     return [t for t in TARGETS[k] if t != src and not (src == "jpg" and t == "jpeg")]
 
 
+# ——— video enhancement (ffmpeg only; free-tier CPU) ———
+ENH = {"hd720": 720, "hd1080": 1080, "hdsame": 0}
+ENH_MAX_SEC = {"hd720": 180, "hd1080": 120, "hdsame": 180}
+ENH_TIMEOUT = 45 * 60
+
+
+def is_enh(dst):
+    return (dst or "").lower() in ENH
+
+
+def valid_target(src_ext, dst_ext):
+    if is_enh(dst_ext):
+        return kind_of(src_ext) == "video"
+    return bool(kind_of(src_ext)) and dst_ext in targets_for(src_ext)
+
+
+def probe_video(path):
+    import json as _j
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                        "stream=width,height,r_frame_rate,color_transfer:format=duration",
+                        "-of", "json", path], capture_output=True, timeout=60)
+    d = _j.loads((r.stdout or b"{}").decode("utf-8", "ignore") or "{}")
+    st = (d.get("streams") or [{}])[0]
+    w, h = int(st.get("width") or 0), int(st.get("height") or 0)
+    if not w or not h:
+        raise ValueError("not_video")
+    try:
+        a, b = (st.get("r_frame_rate") or "30/1").split("/")
+        fps = float(a) / float(b or 1)
+    except Exception:
+        fps = 30.0
+    try:
+        dur = float((d.get("format") or {}).get("duration") or 0)
+    except Exception:
+        dur = 0.0
+    return {"w": w, "h": h, "fps": fps, "dur": dur, "trc": st.get("color_transfer") or ""}
+
+
+def enh_plan(info, choice):
+    """Return (out_w, out_h) on the short side target; never > 2x source or 1080."""
+    w, h = info["w"], info["h"]
+    short = min(w, h)
+    want = ENH.get(choice, 0) or short
+    tgt = min(want, short * 2, 1080)
+    if short >= tgt:
+        tgt = min(short, 1080)  # no upscale; only shrink >1080 to keep CPU sane
+    k = tgt / float(short)
+    ow = int(round(w * k / 2)) * 2
+    oh = int(round(h * k / 2)) * 2
+    return max(2, ow), max(2, oh)
+
+
+def enhance_video(inp, out, choice, job=None):
+    info = probe_video(inp)
+    ow, oh = enh_plan(info, choice)
+    up = max(ow, oh) > max(info["w"], info["h"])
+    vf = []
+    if info["trc"] in ("arib-std-b67", "smpte2084"):
+        # iPhone HDR → SDR so colours are not washed out
+        vf.append("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,"
+                  "zscale=t=bt709:m=bt709:r=tv")
+    if info["fps"] > 31:
+        vf.append("fps=30")
+    vf.append("hqdn3d=1.5:1.5:6:6")
+    vf.append(f"scale={ow}:{oh}:flags=lanczos")
+    vf.append("unsharp=5:5:0.9:5:5:0.0" if up else "unsharp=5:5:0.6:5:5:0.0")
+    vf.append("eq=contrast=1.04:saturation=1.10")
+    vf.append("format=yuv420p")
+    dur = info["dur"] or 1.0
+
+    def attempt(filters):
+        cmd = ["ffmpeg", "-y", "-v", "error", "-nostats", "-progress", "pipe:1", "-threads", "1", "-i", inp,
+               "-map", "0:v:0", "-map", "0:a:0?", "-vf", ",".join(filters),
+               "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-profile:v", "high",
+               "-pix_fmt", "yuv420p", "-threads", "1", "-c:a", "aac", "-b:a", "160k", "-ac", "2",
+               "-movflags", "+faststart", "-map_metadata", "-1", "-tag:v", "avc1", out]
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        t0 = time.time()
+        import threading as _t
+        errbuf = []
+        _t.Thread(target=lambda: errbuf.append(p.stderr.read()), daemon=True).start()
+        for line in p.stdout:
+            if time.time() - t0 > ENH_TIMEOUT:
+                p.kill(); raise RuntimeError("timeout")
+            line = line.decode("utf-8", "ignore").strip()
+            if line.startswith("out_time_us=") or line.startswith("out_time_ms="):
+                try:
+                    sec = int(line.split("=", 1)[1]) / 1e6
+                except Exception:
+                    continue
+                if job is not None and sec > 0:
+                    frac = max(0.0, min(1.0, sec / dur))
+                    el = time.time() - t0
+                    job["progress"] = int(10 + frac * 85)
+                    job["eta"] = int(el / frac - el) if frac > 0.02 else None
+        p.wait()
+        if p.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) == 0:
+            raise RuntimeError((b"".join(errbuf) or b"ffmpeg failed").decode("utf-8", "ignore")[-400:])
+
+    if job is not None:
+        job.update(src_w=info["w"], src_h=info["h"], out_w=ow, out_h=oh, duration=round(dur, 1))
+    try:
+        attempt(vf)
+    except RuntimeError as e:
+        if str(e) == "timeout" or not vf[0].startswith("zscale"):
+            raise
+        attempt(vf[1:])  # zscale unavailable → plain path
+    return out
+
+
 def _run(cmd, timeout=600):
     return subprocess.run(cmd, timeout=timeout, capture_output=True)
 
@@ -367,15 +477,24 @@ def run_job(jid):
         try:
             src = j["src_ext"]
             dst = j["dst_ext"]
-            out = os.path.join(j["dir"], f"out.{dst}")
-            j["progress"] = 20
-            do_convert(j["infile"], out, src, dst)
+            if is_enh(dst):
+                out = os.path.join(j["dir"], "out.mp4")
+                j["progress"] = 8
+                enhance_video(j["infile"], out, dst, job=j)
+            else:
+                out = os.path.join(j["dir"], f"out.{dst}")
+                j["progress"] = 20
+                do_convert(j["infile"], out, src, dst)
             j["progress"] = 95
             if not os.path.exists(out) or os.path.getsize(out) == 0:
                 raise RuntimeError("empty output")
-            j.update(state="done", progress=100, file=out, size=os.path.getsize(out),
-                     mime=MIME.get(dst, "application/octet-stream"),
-                     filename=f"converted-{jid[:8]}.{dst}", at=time.time())
+            if is_enh(dst):
+                j.update(state="done", progress=100, file=out, size=os.path.getsize(out),
+                         mime="video/mp4", filename=f"enhanced-{jid[:8]}.mp4", at=time.time())
+            else:
+                j.update(state="done", progress=100, file=out, size=os.path.getsize(out),
+                         mime=MIME.get(dst, "application/octet-stream"),
+                         filename=f"converted-{jid[:8]}.{dst}", at=time.time())
         except Exception as e:
             j.update(state="error", progress=0, error=str(e)[:300], at=time.time())
 
@@ -391,7 +510,7 @@ def create_job(upload_path, src_name, dst_ext, size):
     dst_ext = (dst_ext or "").lower().lstrip(".")
     if dst_ext == "jpeg":
         dst_ext = "jpg"
-    if not kind_of(src_ext) or dst_ext not in targets_for(src_ext):
+    if not valid_target(src_ext, dst_ext):
         raise ValueError("unsupported")
     with CLOCK:
         active = sum(1 for j in CJOBS.values() if j["state"] in ("queued", "running"))
@@ -402,6 +521,16 @@ def create_job(upload_path, src_name, dst_ext, size):
         os.makedirs(d, exist_ok=True)
         infile = os.path.join(d, f"in.{src_ext}")
         shutil.move(upload_path, infile)
+    if is_enh(dst_ext):
+        try:
+            info = probe_video(infile)
+        except Exception:
+            shutil.rmtree(d, ignore_errors=True)
+            raise ValueError("not_video")
+        if info["dur"] > ENH_MAX_SEC[dst_ext] + 1:
+            shutil.rmtree(d, ignore_errors=True)
+            raise ValueError("too_long")
+    with CLOCK:
         CJOBS[jid] = {"state": "queued", "progress": 0, "at": time.time(), "dir": d,
                       "infile": infile, "src_ext": src_ext, "dst_ext": dst_ext,
                       "src_name": src_name}
@@ -430,7 +559,7 @@ def init_upload(name, size, dst_ext, n_chunks):
     dst_ext = (dst_ext or "").lower().lstrip(".")
     if dst_ext == "jpeg":
         dst_ext = "jpg"
-    if not kind_of(src_ext) or dst_ext not in targets_for(src_ext):
+    if not valid_target(src_ext, dst_ext):
         raise ValueError("unsupported")
     with CLOCK:
         active = sum(1 for j in CJOBS.values() if j["state"] in ("queued", "running"))
