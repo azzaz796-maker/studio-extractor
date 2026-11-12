@@ -4,7 +4,7 @@ from fastapi.responses import FileResponse, JSONResponse
 import yt_dlp, re, json, urllib.request
 from convert import (create_job as c_create, CJOBS, cleanup_c, targets_for, MIME as CMIME, MAX_UPLOAD,
                     _have_soffice, init_upload, save_chunk, finish_upload, cleanup_uploads,
-                    disk_free, need_bytes, UCHUNK, ensure_disk)
+                    disk_free, need_bytes, UCHUNK, ensure_disk, ENH_MAX_SEC)
 
 UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
 
@@ -332,6 +332,8 @@ def _cerr(e):
         status = 429
     elif code == "no_space":
         status = 507
+    elif code == "too_long":
+        status = 422
     raise HTTPException(status, code)
 
 @app.post("/c/job")
@@ -439,7 +441,8 @@ def cfile(jid: str):
 @app.get("/c/targets")
 def ctargets(ext: str = ""):
     return {"targets": targets_for(ext), "libreoffice": bool(_have_soffice()),
-            "max_bytes": MAX_UPLOAD, "chunk": UCHUNK, "free": disk_free()}
+            "max_bytes": MAX_UPLOAD, "chunk": UCHUNK, "free": disk_free(),
+            "enhance_max_sec": ENH_MAX_SEC}
 
 @app.get("/")
 def index():
