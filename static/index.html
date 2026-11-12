@@ -172,7 +172,7 @@
       <div class="actions" style="margin-top:10px">
         <button id="esave" type="button" style="display:none">حفظ الفيديو</button>
       </div>
-      <p class="fname" style="line-height:1.8;margin-top:14px">ملاحظة: التحسين يزيد الحدّة والوضوح ويقلّل التشويش، لكنه ما يخترع تفاصيل مو موجودة في الأصل. أقصى مدة 30 دقيقة وأقصى حجم 800 ميجا. المقاطع لين دقيقة تتحسن بأعلى جودة (حتى 1080p) وتاخذ وقت أطول نسبياً، والأطول من دقيقة تتحسن بالوضع السريع بحد أقصى 720p. الفيديو الطويل ياخذ تقريباً ٣ أضعاف مدته (مقطع 10 دقائق ≈ 30 دقيقة)، أما فيديوهات الجوال بدقة 1080p فتاخذ تقريباً ٧ أضعاف، ومقاطع 4K حدها 5 دقائق. خلّ الصفحة مفتوحة، ولو قفلتها ورجعت بنفس الجهاز نكمل المتابعة.</p>
+      <p class="fname" style="line-height:1.8;margin-top:14px">ملاحظة: التحسين يزيد الحدّة والوضوح ويقلّل التشويش، لكنه ما يخترع تفاصيل مو موجودة في الأصل. أقصى مدة 30 دقيقة وأقصى حجم 800 ميجا. المقاطع لين دقيقة تتحسن بأعلى جودة (حتى 1080p) وتاخذ وقت أطول نسبياً، والأطول من دقيقة تتحسن بالوضع السريع بحد أقصى 720p. الفيديو الطويل ياخذ تقريباً ٣ أضعاف مدته (مقطع 10 دقائق ≈ 30 دقيقة)، أما فيديوهات الجوال بدقة 1080p فتاخذ تقريباً ٨ أضعاف، ومقاطع 4K حدها 5 دقائق. خلّ الصفحة مفتوحة، ولو قفلتها ورجعت بنفس الجهاز نكمل المتابعة.</p>
     </div>
 
     <p class="foot">للاستخدام الشخصي فقط على محتوى مسموح لك بحفظه (روابط عامة). بدون تسجيل دخول.</p>
@@ -898,7 +898,7 @@
     function eFast(){ return eDur > E_HQ_MAX; }
     function eUHD(){ return eW && eH && Math.min(eW,eH) > 1080; }
     function eLimit(){ return eUHD() ? 5*60 : E_MAX_DUR; }
-    function eCost(){ const sh=Math.min(eW||640,eH||360); return sh<=720 ? 3 : (sh<=1080 ? 7 : 25); }
+    function eCost(){ const sh=Math.min(eW||640,eH||360); return sh<=720 ? 3.4 : (sh<=1080 ? 8 : 25); }
     function setEStatus(t,k){ estatus.textContent=t||""; estatus.className="status"+(k?" "+k:""); }
     function setEProgress(p){
       if (p==null){ eprogress.classList.remove("show"); eprogressBar.style.width="0%"; return; }
