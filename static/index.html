@@ -149,6 +149,32 @@
       </div>
     </div>
 
+
+    <h2 class="section-title"><span>تحسين جودة الفيديو</span></h2>
+    <div class="card" id="enhCard">
+      <label class="pick" for="efile">
+        <strong>اختر فيديو من جهازك</strong>
+        <span>نرفع الدقة ونحسّن الحدّة والوضوح والألوان</span>
+        <input id="efile" type="file" accept="video/*,.mov,.mp4,.m4v,.webm,.mkv" />
+      </label>
+      <div id="efname" class="fname"></div>
+      <label style="margin-top:14px">الجودة المطلوبة</label>
+      <div id="eopts" class="fmt-grid" aria-label="الجودة">
+        <button type="button" class="fmt" data-q="hd720">720p</button>
+        <button type="button" class="fmt active" data-q="hd1080">1080p (Full HD)</button>
+        <button type="button" class="fmt" data-q="hdsame">تحسين بدون تكبير</button>
+      </div>
+      <div class="row" style="margin-top:14px">
+        <button id="ego" type="button" disabled>تحسين الجودة</button>
+      </div>
+      <div id="estatus" class="status" role="status" aria-live="polite"></div>
+      <div id="eprogress" class="progress" aria-hidden="true"><span id="eprogressBar"></span></div>
+      <div class="actions" style="margin-top:10px">
+        <button id="esave" type="button" style="display:none">حفظ الفيديو</button>
+      </div>
+      <p class="fname" style="line-height:1.8;margin-top:14px">ملاحظة: التحسين يزيد الحدّة والوضوح ويقلّل التشويش، لكنه ما يخترع تفاصيل مو موجودة في الأصل. أقصى مدة: دقيقتين لـ 1080p و3 دقائق لـ 720p أو بدون تكبير، والمقاطع الطويلة تاخذ وقت.</p>
+    </div>
+
     <p class="foot">للاستخدام الشخصي فقط على محتوى مسموح لك بحفظه (روابط عامة). بدون تسجيل دخول.</p>
     <p class="note">أتمنى استخدامه فيما يرضى الله</p>
   </div>
@@ -854,6 +880,114 @@
         if (mode==="download") setCStatus("تم التنزيل — إن لم تظهر المشاركة استخدم الملف من التنزيلات.", "ok");
         else if (mode!=="abort") setCStatus("تم فتح المشاركة / التحميل.", "ok");
       }catch(e){ setCStatus("تعذّر الحفظ. جرّب مرة أخرى.", "bad"); }
+    });
+
+
+    // ——— تحسين جودة الفيديو ———
+    const efile=$("efile"), efname=$("efname"), eopts=$("eopts"), ego=$("ego"), estatus=$("estatus"),
+          eprogress=$("eprogress"), eprogressBar=$("eprogressBar"), esave=$("esave");
+    let ePicked=null, eQ="hd1080", ePending=null, eUrl=null, eDur=0;
+    const E_MAX_SEC={hd720:180, hd1080:120, hdsame:180};
+    function setEStatus(t,k){ estatus.textContent=t||""; estatus.className="status"+(k?" "+k:""); }
+    function setEProgress(p){
+      if (p==null){ eprogress.classList.remove("show"); eprogressBar.style.width="0%"; return; }
+      eprogress.classList.add("show"); eprogressBar.style.width=Math.max(0,Math.min(100,Math.round(p)))+"%";
+    }
+    function fmtSec(n){ n=Math.max(0,Math.round(n)); const m=Math.floor(n/60), x=n%60; return m? (m+" د "+x+" ث") : (x+" ث"); }
+    function eTooLong(){ return eDur && eDur > E_MAX_SEC[eQ]+1; }
+    function eCheck(){
+      ego.disabled=!ePicked;
+      if (!ePicked) return;
+      if (eTooLong()){
+        setEStatus("المقطع مدته "+fmtSec(eDur)+" وهذا أطول من الحد ("+fmtSec(E_MAX_SEC[eQ])+") لهذي الجودة. قصّ المقطع أو اختر 720p.", "bad");
+        ego.disabled=true;
+      } else setEStatus("اختر الجودة ثم اضغط «تحسين الجودة».", null);
+    }
+    [...eopts.querySelectorAll(".fmt")].forEach(b=>b.addEventListener("click",()=>{
+      [...eopts.querySelectorAll(".fmt")].forEach(x=>x.classList.remove("active"));
+      b.classList.add("active"); eQ=b.dataset.q; eCheck();
+    }));
+    efile.addEventListener("change",()=>{
+      ePending=null; eUrl=null; esave.style.display="none"; setEProgress(null); eDur=0;
+      const f=efile.files && efile.files[0];
+      if (!f){ ePicked=null; efname.textContent=""; ego.disabled=true; return; }
+      if (f.size>C_MAX){ setEStatus("الفيديو أكبر من 800 ميجا. اختر مقطعاً أصغر.", "bad"); efile.value=""; ePicked=null; ego.disabled=true; return; }
+      ePicked=f; efname.textContent=f.name+" · "+Math.max(1,mb(f.size))+" ميجا";
+      eCheck();
+      try{
+        const v=document.createElement("video"); v.preload="metadata"; v.muted=true;
+        const u=URL.createObjectURL(f);
+        v.onloadedmetadata=()=>{ if (isFinite(v.duration)) eDur=v.duration;
+          if (v.videoWidth) efname.textContent=f.name+" · "+Math.max(1,mb(f.size))+" ميجا · "+v.videoWidth+"×"+v.videoHeight+" · "+fmtSec(eDur);
+          URL.revokeObjectURL(u); eCheck(); };
+        v.onerror=()=>URL.revokeObjectURL(u);
+        v.src=u;
+      }catch(e){}
+    });
+    ego.addEventListener("click", async ()=>{
+      if (!ePicked || eTooLong()) return;
+      ego.disabled=true; esave.style.display="none"; ePending=null; eUrl=null;
+      setEStatus("جاري الرفع… 0%", "warn"); setEProgress(2);
+      try{
+        const id=await uploadChunked(ePicked, eQ, (pct)=>{ setEStatus("جاري الرفع… "+pct+"%", "warn"); setEProgress(Math.max(2, pct*0.3)); });
+        setEStatus("جاري تحسين الجودة… خلّ الصفحة مفتوحة", "warn"); setEProgress(30);
+        const t0=Date.now();
+        while (Date.now()-t0 < 60*60*1000){
+          await new Promise(r=>setTimeout(r,2000));
+          let st=null;
+          try{ st=await fetch("/c/job/"+id, {cache:"no-store"}).then(r=>r.ok?r.json():null); }catch(e){}
+          if (!st) continue;
+          if (st.state==="queued"){ setEStatus("بالانتظار… فيه طلب قبلك، بيبدأ بعده تلقائياً", "warn"); continue; }
+          if (st.state==="running"){
+            const p=st.progress||0; setEProgress(30+p*0.68);
+            let t="جاري تحسين الجودة… "+p+"%";
+            if (st.out_w) t+=" ("+st.src_w+"×"+st.src_h+" ← "+st.out_w+"×"+st.out_h+")";
+            if (st.eta!=null && p>12) t+=" · باقي تقريباً "+fmtSec(st.eta);
+            setEStatus(t, "warn"); continue;
+          }
+          if (st.state==="error") throw new Error(st.error||"enhance");
+          if (st.state==="done"){
+            setEProgress(100);
+            eUrl="/c/file/"+id;
+            const dims = st.out_w ? (" — "+st.out_w+"×"+st.out_h) : "";
+            if ((st.size||0) > C_SHARE_MAX){
+              esave.textContent="تنزيل الفيديو"; esave.style.display="";
+              setEStatus("تم التحسين ✓"+dims+" — الملف "+mb(st.size)+" ميجا؛ اضغط للتنزيل ثم افتحه من الملفات واختر «حفظ الفيديو».", "ok");
+            } else {
+              const res=await fetch(eUrl); if (!res.ok) throw new Error("download");
+              const blob=await res.blob();
+              ePending=asShareFile(blob, "mp4");
+              esave.textContent="حفظ الفيديو"; esave.style.display="";
+              setEStatus("تم التحسين ✓"+dims+" — اضغط «حفظ الفيديو».", "ok");
+            }
+            ego.disabled=false; return;
+          }
+        }
+        throw new Error("timeout");
+      }catch(e){
+        const s=String(e&&e.message||e);
+        let msg="تعذّر تحسين الفيديو. جرّب مقطعاً أقصر أو جودة 720p.";
+        if (/too_long/i.test(s)) msg="المقطع أطول من الحد المسموح ("+fmtSec(E_MAX_SEC[eQ])+"). قصّه وجرّب مرة ثانية.";
+        if (/too_large/i.test(s)) msg="الفيديو أكبر من 800 ميجا.";
+        if (/no_space/i.test(s)) msg="لا توجد مساحة كافية على الخادم الآن. جرّب لاحقاً.";
+        if (/busy/i.test(s)) msg="الخادم مشغول الآن. أعد المحاولة بعد قليل.";
+        if (/not_video|unsupported/i.test(s)) msg="هذا الملف مو فيديو مدعوم. جرّب MP4 أو MOV.";
+        if (/timeout/i.test(s)) msg="أخذ التحسين وقت طويل وتوقف. جرّب مقطعاً أقصر أو 720p.";
+        if (/incomplete|chunk/i.test(s)) msg="فشل رفع جزء من الفيديو. أعد المحاولة.";
+        setEStatus(msg, "bad"); setEProgress(null); ego.disabled=false;
+      }
+    });
+    esave.addEventListener("click", async ()=>{
+      if (eUrl && !ePending){
+        const a=document.createElement("a"); a.href=eUrl; a.download=""; a.rel="noopener"; a.click();
+        setEStatus("بدأ التنزيل — افتحه من الملفات واختر «حفظ الفيديو».", "ok"); return;
+      }
+      if (!ePending) return;
+      try{
+        const mode=await shareOrDownload(ePending);
+        if (mode==="download") setEStatus("تم التنزيل — إن لم تظهر المشاركة افتحه من التنزيلات.", "ok");
+        else if (mode!=="abort") setEStatus("تم فتح المشاركة ✓", "ok");
+      }catch(e){ setEStatus("تعذّر الحفظ. جرّب مرة أخرى.", "bad"); }
     });
 
     // Shortcut / Share Sheet: ?url= , ?u= , #url=
