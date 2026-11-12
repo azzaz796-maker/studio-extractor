@@ -77,6 +77,8 @@
     .pick{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:22px 16px;border-radius:18px;border:1.5px dashed rgba(255,255,255,.18);background:rgba(0,0,0,.22);cursor:pointer;text-align:center;color:var(--muted);font-size:.92rem;line-height:1.5}
     .pick strong{color:var(--text)}
     .pick input{display:none}
+    button.bigsave{width:100%;font-size:1.15rem;padding:18px 18px;border-radius:20px;background:linear-gradient(135deg,#34d399,#22d3ee 55%,#a78bfa);box-shadow:0 14px 34px rgba(52,211,153,.35)}
+    .savehint{flex:1 1 100%;width:100%;margin:8px 0 0;text-align:center;font-size:.85rem;color:var(--ok);font-weight:600}
     .fname{margin-top:10px;font-size:.85rem;color:var(--muted);text-align:center;overflow-wrap:anywhere}
   </style>
 </head>
@@ -193,7 +195,6 @@
     const progressEl = $("progress");
     const progressBar = $("progressBar");
 
-    const SHARE_MAX_BYTES = 35 * 1024 * 1024;
     const RESOLVE_TIMEOUT_MS = 100000;
 
     let current = null;
@@ -356,6 +357,87 @@
       throw new Error("timeout");
     }
 
+    // ——— one-tap «حفظ في الاستوديو» (shared by all sections) ———
+    // iOS only opens the share sheet inside a user gesture, so the File is prepared first and the
+    // button's click handler calls navigator.share synchronously (no await before it).
+    const SAVE_BLOB_MAX = 300 * 1024 * 1024; // bigger files can crash Safari's tab memory → server link
+    const SAVE_HINT = "اضغط حفظ الفيديو من القائمة وينحفظ في الاستوديو";
+    function canShareThis(file){
+      try{ return !!(navigator.share && file && (!navigator.canShare || navigator.canShare({files:[file]}))); }
+      catch(e){ return false; }
+    }
+    function hintFor(btn){
+      let h=btn.parentNode && btn.parentNode.querySelector(".savehint");
+      if (!h){ h=document.createElement("p"); h.className="savehint"; btn.insertAdjacentElement("afterend", h); }
+      return h;
+    }
+    function hideSave(btn){
+      btn.style.display="none"; btn.onclick=null;
+      const h=btn.parentNode && btn.parentNode.querySelector(".savehint"); if (h) h.hidden=true;
+    }
+    function linkDownload(href, name){
+      const a=document.createElement("a"); a.href=href; a.download=name||""; a.rel="noopener";
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+    function fallbackSave(opt){
+      if (opt.file){
+        const u=URL.createObjectURL(opt.file); linkDownload(u, opt.file.name);
+        setTimeout(()=>URL.revokeObjectURL(u), 120000);
+      } else if (opt.url) linkDownload(opt.url, "");
+      opt.status("ما قدرنا نفتح قائمة المشاركة، فنزّلناه للملفات. افتحه من «الملفات» واضغط مشاركة ← «حفظ الفيديو».", "warn");
+    }
+    // Must be called synchronously from a click (or tried right after a download, auto=true).
+    function shareNow(opt, auto){
+      const file=opt.file;
+      if (!file || !canShareThis(file)){ if (!auto) fallbackSave(opt); return; }
+      let p;
+      try{ p=navigator.share({files:[file]}); }
+      catch(e){ if (!auto) fallbackSave(opt); return; }
+      Promise.resolve(p).then(()=>{
+        opt.status(opt.isVideo ? "تم ✓ إذا اخترت «حفظ الفيديو» تلقاه في الاستوديو." : "تم ✓", "ok");
+      }, (e)=>{
+        const n=e && e.name;
+        if (n==="AbortError"){ opt.status("انلغت القائمة — اضغط «"+opt.label+"» مرة ثانية.", "warn"); return; }
+        if (auto) return;               // no user activation after a long download → wait for the tap
+        fallbackSave(opt);
+      });
+    }
+    // opt: {btn, status(text,kind), file?, url?, isVideo, label?}
+    function offerSave(opt){
+      const btn=opt.btn;
+      opt.label = opt.label || (opt.isVideo ? "حفظ في الاستوديو" : "حفظ الملف");
+      btn.textContent=opt.label; btn.classList.add("bigsave"); btn.disabled=false; btn.style.display="";
+      const h=hintFor(btn);
+      h.textContent = opt.isVideo ? SAVE_HINT : (opt.file && /^image\//.test(opt.file.type) ? "اضغط «حفظ الصورة» من القائمة وتنحفظ في الصور" : "اختر مكان الحفظ من القائمة");
+      h.hidden = !opt.file;
+      if (!opt.file){
+        // too big to hold in Safari's memory → stream from the server
+        btn.textContent = opt.isVideo ? "تنزيل الفيديو" : "تنزيل الملف";
+        btn.onclick=()=>{ linkDownload(opt.url, ""); opt.status("بدأ التنزيل — افتحه من «الملفات» واضغط مشاركة ← «حفظ الفيديو».", "ok"); };
+        return;
+      }
+      btn.onclick=()=>shareNow(opt, false);
+      // try to open the sheet right away (works only if the tap's activation is still alive)
+      let active=true;
+      try{ if (navigator.userActivation) active=navigator.userActivation.isActive; }catch(e){}
+      if (active) shareNow(opt, true);
+    }
+    // fetch a finished server file into a File, with progress
+    async function fetchAsFile(url, name, type, onPct){
+      const res=await fetch(url, {cache:"no-store"});
+      if (!res.ok) throw new Error("download");
+      const total=Number(res.headers.get("content-length")||0);
+      let blob;
+      if (res.body && res.body.getReader && total>0){
+        const rd=res.body.getReader(); const parts=[]; let got=0;
+        while(true){ const {done,value}=await rd.read(); if (done) break; parts.push(value); got+=value.byteLength; if (onPct) onPct(got/total*100); }
+        blob=new Blob(parts, {type});
+      } else blob=await res.blob();
+      if (!blob.size) throw new Error("empty");
+      return new File([blob], name, {type});
+    }
+    function shortName(prefix, ext){ return prefix+"-"+Date.now().toString(36)+"."+ext; }
+
     function canShareFiles() {
       try {
         return !!(navigator.share && navigator.canShare &&
@@ -452,7 +534,7 @@
 
     async function prepareFileAfterExtract(data) {
       pendingShareFile = null;
-      saveBtn.style.display = "none";
+      hideSave(saveBtn);
       setProgress(0);
       setStatus("جاري التحميل 0%");
       const candidates = formatCandidates(data);
@@ -471,20 +553,13 @@
             setProgress(pct);
             setStatus("جاري التحميل " + Math.round(pct) + "%");
           });
-          if (file.size > SHARE_MAX_BYTES) {
-            // Still keep it — share may fall back to download
-          }
-          pendingShareFile = file;
+          pendingShareFile = asShareVideo(file);
           if (current) {
             current.url = cand.url;
-            current.filename = file.name;
+            current.filename = pendingShareFile.name;
           }
           setProgress(100);
-          saveBtn.style.display = "";
-          saveBtn.disabled = false;
-          saveBtn.textContent = "حفظ الفيديو";
-          const mb = Math.max(0.1, Math.round(file.size / 1048576 * 10) / 10);
-          setStatus("اكتمل التحميل (" + mb + " MB). اضغط «حفظ الفيديو».", "ok");
+          readyToSave(pendingShareFile);
           return;
         } catch (e) {
           lastErr = String(e && e.message || e);
@@ -504,18 +579,14 @@
                 setProgress(pct);
                 setStatus("جاري التحميل " + Math.round(pct) + "%");
               });
-              pendingShareFile = file;
+              pendingShareFile = asShareVideo(file);
               if (current) {
                 current.url = cand.url;
-                current.filename = file.name;
+                current.filename = pendingShareFile.name;
                 current.title = again.title || current.title;
               }
               setProgress(100);
-              saveBtn.style.display = "";
-              saveBtn.disabled = false;
-              saveBtn.textContent = "حفظ الفيديو";
-              const mb = Math.max(0.1, Math.round(file.size / 1048576 * 10) / 10);
-              setStatus("اكتمل التحميل (" + mb + " MB). اضغط «حفظ الفيديو».", "ok");
+              readyToSave(pendingShareFile);
               return;
             } catch (e) {
               lastErr = String(e && e.message || e);
@@ -527,61 +598,19 @@
       }
       setProgress(null);
       pendingShareFile = null;
-      saveBtn.style.display = "none";
+      hideSave(saveBtn);
       setStatus(friendlyError(lastErr), "bad");
     }
 
-    async function sharePreparedFile(file) {
-      if (!file) throw new Error("no-file");
-      file = asShareVideo(file);
-      if (!(navigator.share && navigator.canShare && navigator.canShare({ files: [file] }))) {
-        throw new Error("share-unsupported");
-      }
-      await navigator.share({ files: [file] });
+    function readyToSave(file){
+      const mbv = Math.max(0.1, Math.round(file.size / 1048576 * 10) / 10);
+      setStatus("اكتمل التحميل (" + mbv + " MB) ✓ اضغط «حفظ في الاستوديو».", "ok");
+      offerSave({btn: saveBtn, file, isVideo: true, status: setStatus});
     }
-
     function downloadBlobFile(file) {
       const url = URL.createObjectURL(file);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = file.name || "video.mp4";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      linkDownload(url, file.name || "video.mp4");
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    }
-
-    async function saveToStudio() {
-      if (!pendingShareFile) {
-        setStatus("انتظر اكتمال التحميل أولاً.", "warn");
-        return;
-      }
-      const file = pendingShareFile;
-      saveBtn.disabled = true;
-      try {
-        if (canShareFiles() || (navigator.share && navigator.canShare && navigator.canShare({ files: [file] }))) {
-          await sharePreparedFile(file);
-          setStatus("تم — اختر «حفظ الفيديو» من قائمة المشاركة.", "ok");
-        } else {
-          downloadBlobFile(file);
-          setStatus("بدأ تنزيل الملف إلى جهازك.", "ok");
-        }
-      } catch (err) {
-        if (err && err.name === "AbortError") {
-          setStatus("تم إلغاء المشاركة. اضغط «حفظ الفيديو» مرة أخرى.");
-        } else if (canShareFiles()) {
-          setStatus("تعذّرت المشاركة. حاول مرة أخرى.", "bad");
-        } else {
-          try {
-            downloadBlobFile(file);
-            setStatus("بدأ تنزيل الملف إلى جهازك.", "ok");
-          } catch {
-            setStatus("تعذّر حفظ الملف.", "bad");
-          }
-        }
-      } finally {
-        saveBtn.disabled = false;
-      }
     }
 
     function showResolved(data) {
@@ -596,7 +625,7 @@
         thumbEl.hidden = true;
         thumbEl.removeAttribute("src");
       }
-      saveBtn.style.display = "none";
+      hideSave(saveBtn);
       resultEl.classList.add("show");
       setStatus("تم الاستخراج — يبدأ التحميل…", "ok");
       prepareFileAfterExtract(data);
@@ -643,7 +672,7 @@
         authorEl.textContent = "الرابط قد يكون خاصاً أو الخدمة مشغولة — أعد المحاولة.";
         thumbEl.hidden = true;
         current = null;
-        saveBtn.style.display = "none";
+        hideSave(saveBtn);
       } finally {
         if (myGen === resolveGen) {
           goBtn.disabled = false;
@@ -674,7 +703,6 @@
 
     goBtn.addEventListener("click", onGo);
     pasteBtn.addEventListener("click", pasteAndGo);
-    saveBtn.addEventListener("click", saveToStudio);
     urlInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") onGo();
     });
@@ -701,7 +729,6 @@
     let cPending = null;
     const C_MAX = 800 * 1024 * 1024;
     const C_CHUNK = 12 * 1024 * 1024;
-    const C_SHARE_MAX = 35 * 1024 * 1024;
     const C_MIME = {
       mp4:"video/mp4", mov:"video/quicktime", webm:"video/webm", mkv:"video/x-matroska", avi:"video/x-msvideo",
       gif:"image/gif", mp3:"audio/mpeg", m4a:"audio/mp4", wav:"audio/wav", ogg:"audio/ogg", aac:"audio/aac", flac:"audio/flac",
@@ -757,7 +784,7 @@
       setCStatus("اختر الصيغة ثم اضغط تحويل.", null);
     }
     cfile.addEventListener("change",()=>{
-      cPending=null; csave.style.display="none"; setCProgress(null);
+      cPending=null; hideSave(csave); setCProgress(null);
       const f=cfile.files && cfile.files[0];
       if (!f){ cPicked=null; cfname.textContent=""; cformats.innerHTML=""; cgo.disabled=true; return; }
       if (f.size>C_MAX){ setCStatus("الملف أكبر من 800 ميجا. اختر ملفاً أصغر.", "bad"); cfile.value=""; cPicked=null; return; }
@@ -773,18 +800,6 @@
       return new File([blob], name, {type: mime});
     }
     function mb(n){ return Math.round(n/1024/1024); }
-    async function shareOrDownload(file){
-      try{
-        if (file && file.size <= C_SHARE_MAX && navigator.share && navigator.canShare && navigator.canShare({files:[file]})){
-          await navigator.share({files:[file]});
-          return "shared";
-        }
-      }catch(e){ if (e && e.name==="AbortError") return "abort"; }
-      const a=document.createElement("a");
-      a.href=URL.createObjectURL(file); a.download=file.name; a.click();
-      setTimeout(()=>URL.revokeObjectURL(a.href), 8000);
-      return "download";
-    }
     async function uploadChunked(file, format, onPct){
       const n = Math.max(1, Math.ceil(file.size / C_CHUNK));
       const init = await fetch("/c/upload/init", {
@@ -819,7 +834,7 @@
     }
     cgo.addEventListener("click", async ()=>{
       if (!cPicked || !cTarget) return;
-      cgo.disabled=true; csave.style.display="none"; cPending=null; window.__cFileUrl=null;
+      cgo.disabled=true; hideSave(csave); cPending=null; window.__cFileUrl=null;
       setCStatus("جاري الرفع… 0%", "warn"); setCProgress(2);
       try{
         const id = await uploadChunked(cPicked, cTarget, (pct)=>{
@@ -836,20 +851,20 @@
             const size = st.size||0;
             const url = "/c/file/"+id;
             window.__cFileUrl = url;
-            if (size > C_SHARE_MAX){
+            const isVid = (cTarget==="mp4"||cTarget==="mov");
+            const isImg = ["jpg","png","gif","webp"].includes(cTarget);
+            if (size > SAVE_BLOB_MAX){
               cPending=null;
-              csave.style.display="";
-              csave.textContent="تنزيل الملف";
-              setCStatus("تم التحويل ✓ — الملف كبير؛ اضغط للتنزيل ثم «حفظ في الملفات».", "ok");
+              offerSave({btn: csave, url, isVideo: isVid, status: setCStatus});
+              setCStatus("تم التحويل ✓ — الملف كبير جداً ("+mb(size)+" ميجا) لقائمة المشاركة، اضغط «تنزيل».", "ok");
             } else {
-              const res=await fetch(url);
-              if (!res.ok) throw new Error("download");
-              const blob=await res.blob();
-              const file=asShareFile(blob, cTarget);
-              cPending=file; csave.style.display="";
-              csave.textContent = (cTarget==="mp4"||cTarget==="mov") ? "حفظ الفيديو" :
-                (["jpg","png","gif","webp"].includes(cTarget) ? "حفظ الصورة" : "حفظ الملف");
-              setCStatus("تم التحويل ✓ — اضغط للحفظ.", "ok");
+              setCStatus("تم التحويل ✓ — جاري تجهيز الملف للحفظ…", "warn");
+              const type = C_MIME[cTarget]||"application/octet-stream";
+              const name = isVid ? shortName("video", cTarget) : (isImg ? shortName("image", cTarget) : shortName("converted", cTarget));
+              const file = await fetchAsFile(url, name, type, (p)=>setCStatus("جاري تجهيز الملف للحفظ… "+Math.round(p)+"%", "warn"));
+              cPending=file;
+              setCStatus(isVid ? "جاهز ✓ اضغط «حفظ في الاستوديو»." : "جاهز ✓ اضغط للحفظ.", "ok");
+              offerSave({btn: csave, file, isVideo: isVid, label: isVid ? "حفظ في الاستوديو" : (isImg ? "حفظ الصورة" : "حفظ الملف"), status: setCStatus});
             }
             cgo.disabled=false; return;
           }
@@ -867,20 +882,7 @@
         setCStatus(msg, "bad"); setCProgress(null); cgo.disabled=false;
       }
     });
-    csave.addEventListener("click", async ()=>{
-      if (window.__cFileUrl && !cPending){
-        const a=document.createElement("a");
-        a.href=window.__cFileUrl; a.download=""; a.rel="noopener"; a.click();
-        setCStatus("بدأ التنزيل — من الملفات اختر «حفظ في الملفات».", "ok");
-        return;
-      }
-      if (!cPending) return;
-      try{
-        const mode = await shareOrDownload(cPending);
-        if (mode==="download") setCStatus("تم التنزيل — إن لم تظهر المشاركة استخدم الملف من التنزيلات.", "ok");
-        else if (mode!=="abort") setCStatus("تم فتح المشاركة / التحميل.", "ok");
-      }catch(e){ setCStatus("تعذّر الحفظ. جرّب مرة أخرى.", "bad"); }
-    });
+
 
 
     // ——— تحسين جودة الفيديو ———
@@ -923,7 +925,7 @@
       b.classList.add("active"); eQ=b.dataset.q; eCheck();
     }));
     efile.addEventListener("change",()=>{
-      ePending=null; eUrl=null; esave.style.display="none"; setEProgress(null); eDur=0; eW=0; eH=0;
+      ePending=null; eUrl=null; hideSave(esave); setEProgress(null); eDur=0; eW=0; eH=0;
       const f=efile.files && efile.files[0];
       if (!f){ ePicked=null; efname.textContent=""; ego.disabled=true; return; }
       if (f.size>C_MAX){ setEStatus("الفيديو أكبر من 800 ميجا. اختر مقطعاً أصغر.", "bad"); efile.value=""; ePicked=null; ego.disabled=true; return; }
@@ -941,7 +943,7 @@
     });
     ego.addEventListener("click", async ()=>{
       if (!ePicked || eTooLong()) return;
-      ego.disabled=true; esave.style.display="none"; ePending=null; eUrl=null;
+      ego.disabled=true; hideSave(esave); ePending=null; eUrl=null;
       setEStatus("جاري الرفع… 0%", "warn"); setEProgress(2);
       try{
         const id=await uploadChunked(ePicked, eQ, (pct)=>{ setEStatus("جاري الرفع… "+pct+"%", "warn"); setEProgress(Math.max(2, pct*0.3)); });
@@ -988,15 +990,14 @@
             setEProgress(100);
             eUrl="/c/file/"+id;
             const dims = st.out_w ? (" — "+st.out_w+"×"+st.out_h) : "";
-            if ((st.size||0) > C_SHARE_MAX){
-              esave.textContent="تنزيل الفيديو"; esave.style.display="";
-              setEStatus("تم التحسين ✓"+dims+" — الملف "+mb(st.size)+" ميجا؛ اضغط للتنزيل ثم افتحه من الملفات واختر «حفظ الفيديو».", "ok");
+            if ((st.size||0) > SAVE_BLOB_MAX){
+              offerSave({btn: esave, url: eUrl, isVideo: true, status: setEStatus});
+              setEStatus("تم التحسين ✓"+dims+" — الملف كبير جداً ("+mb(st.size)+" ميجا) لقائمة المشاركة، اضغط «تنزيل الفيديو».", "ok");
             } else {
-              const res=await fetch(eUrl); if (!res.ok) throw new Error("download");
-              const blob=await res.blob();
-              ePending=asShareFile(blob, "mp4");
-              esave.textContent="حفظ الفيديو"; esave.style.display="";
-              setEStatus("تم التحسين ✓"+dims+" — اضغط «حفظ الفيديو».", "ok");
+              setEStatus("تم التحسين ✓"+dims+" — جاري تجهيز الفيديو للحفظ…", "warn");
+              ePending=await fetchAsFile(eUrl, shortName("video","mp4"), "video/mp4", (p)=>setEStatus("جاري تجهيز الفيديو للحفظ… "+Math.round(p)+"%", "warn"));
+              setEStatus("تم التحسين ✓"+dims+" — اضغط «حفظ في الاستوديو».", "ok");
+              offerSave({btn: esave, file: ePending, isVideo: true, status: setEStatus});
             }
             return;
           }
@@ -1012,18 +1013,7 @@
         ePoll(j.id).then(()=>{ try{ localStorage.removeItem("enhJob"); }catch(e){} }).catch(eFail);
       }catch(e){}
     })();
-    esave.addEventListener("click", async ()=>{
-      if (eUrl && !ePending){
-        const a=document.createElement("a"); a.href=eUrl; a.download=""; a.rel="noopener"; a.click();
-        setEStatus("بدأ التنزيل — افتحه من الملفات واختر «حفظ الفيديو».", "ok"); return;
-      }
-      if (!ePending) return;
-      try{
-        const mode=await shareOrDownload(ePending);
-        if (mode==="download") setEStatus("تم التنزيل — إن لم تظهر المشاركة افتحه من التنزيلات.", "ok");
-        else if (mode!=="abort") setEStatus("تم فتح المشاركة ✓", "ok");
-      }catch(e){ setEStatus("تعذّر الحفظ. جرّب مرة أخرى.", "bad"); }
-    });
+
 
     // Shortcut / Share Sheet: ?url= , ?u= , #url=
     (function autoFromLink() {
