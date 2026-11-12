@@ -60,7 +60,13 @@ def targets_for(ext):
 
 # ——— video enhancement (ffmpeg only; free-tier CPU) ———
 ENH = {"hd720": 720, "hd1080": 1080, "hdsame": 0}
-ENH_MAX_SEC = {"hd720": 180, "hd1080": 120, "hdsame": 180}
+# measured on Render free: ~6.5x realtime for 720p output, ~12x for 1080p output
+ENH_MAX_SEC = {"hd720": 120, "hd1080": 60, "hdsame": 120}
+
+
+def enh_limit(info, choice):
+    ow, oh = enh_plan(info, choice)
+    return 60 if min(ow, oh) > 720 else 120
 ENH_TIMEOUT = 45 * 60
 
 
@@ -103,7 +109,8 @@ def enh_plan(info, choice):
     want = ENH.get(choice, 0) or short
     tgt = min(want, short * 2, 1080)
     if short >= tgt:
-        tgt = min(short, 1080)  # no upscale; only shrink >1080 to keep CPU sane
+        # no upscale; shrink only >1080 (or >720 when the user picked 720p, the fast option)
+        tgt = min(short, 720 if choice == "hd720" else 1080)
     k = tgt / float(short)
     ow = int(round(w * k / 2)) * 2
     oh = int(round(h * k / 2)) * 2
@@ -527,7 +534,7 @@ def create_job(upload_path, src_name, dst_ext, size):
         except Exception:
             shutil.rmtree(d, ignore_errors=True)
             raise ValueError("not_video")
-        if info["dur"] > ENH_MAX_SEC[dst_ext] + 1:
+        if info["dur"] > enh_limit(info, dst_ext) + 1:
             shutil.rmtree(d, ignore_errors=True)
             raise ValueError("too_long")
     with CLOCK:
