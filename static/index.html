@@ -78,6 +78,9 @@
     .pick strong{color:var(--text)}
     .pick input{display:none}
     button.bigsave{width:100%;font-size:1.15rem;padding:18px 18px;border-radius:20px;background:linear-gradient(135deg,#34d399,#22d3ee 55%,#a78bfa);box-shadow:0 14px 34px rgba(52,211,153,.35)}
+    .choice{margin-top:14px;padding:14px;border-radius:20px;background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.10)}
+    .choice .row button{flex:1 1 45%}
+    .choice-title{margin:0 0 10px;text-align:center;font-weight:700;font-size:.95rem}
     .savehint{flex:1 1 100%;width:100%;margin:8px 0 0;text-align:center;font-size:.85rem;color:var(--ok);font-weight:600}
     .fname{margin-top:10px;font-size:.85rem;color:var(--muted);text-align:center;overflow-wrap:anywhere}
   </style>
@@ -100,6 +103,23 @@
         <button id="paste" type="button" class="secondary" title="لصق">لصق</button>
         <button id="go" type="button">تحميل</button>
       </div>
+      <div id="dlChoice" class="choice" hidden>
+        <p class="choice-title">كيف تبي تحمّل المقطع؟</p>
+        <div class="row">
+          <button id="dlNormal" type="button">تحميل عادي</button>
+          <button id="dlEnh" type="button" class="secondary">تحميل مع تحسين الجودة ✨</button>
+        </div>
+        <div id="dlEnhOpts" hidden>
+          <label style="margin-top:14px">جودة التحسين</label>
+          <div id="dlQ" class="fmt-grid" aria-label="جودة التحسين">
+            <button type="button" class="fmt" data-q="hd720">720p (أسرع)</button>
+            <button type="button" class="fmt active" data-q="hd1080">1080p (Full HD)</button>
+            <button type="button" class="fmt" data-q="hdsame">تحسين بدون تكبير</button>
+          </div>
+          <button id="dlEnhGo" type="button" style="width:100%;margin-top:14px">ابدأ التحميل مع التحسين</button>
+          <p class="fname" style="line-height:1.8">نحمّل المقطع على الخادم ثم نحسّن الحدّة والوضوح (ما نخترع تفاصيل مو موجودة). المقاطع لين دقيقة تتحسن حتى 1080p، والأطول بحد أقصى 720p. الحد 30 دقيقة، والوقت تقريباً ٣ أضعاف مدة المقطع أو أكثر.</p>
+        </div>
+      </div>
       <div class="platforms" aria-label="المنصات المدعومة">
         <a class="chip" href="https://www.tiktok.com/" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="#ffffff" aria-hidden="true"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/></svg>TikTok</a>
         <a class="chip" href="https://www.instagram.com/" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="#E4405F" aria-hidden="true"><path d="M7.0301.084c-1.2768.0602-2.1487.264-2.911.5634-.7888.3075-1.4575.72-2.1228 1.3877-.6652.6677-1.075 1.3368-1.3802 2.127-.2954.7638-.4956 1.6365-.552 2.914-.0564 1.2775-.0689 1.6882-.0626 4.947.0062 3.2586.0206 3.6671.0825 4.9473.061 1.2765.264 2.1482.5635 2.9107.308.7889.72 1.4573 1.388 2.1228.6679.6655 1.3365 1.0743 2.1285 1.38.7632.295 1.6361.4961 2.9134.552 1.2773.056 1.6884.069 4.9462.0627 3.2578-.0062 3.668-.0207 4.9478-.0814 1.28-.0607 2.147-.2652 2.9098-.5633.7889-.3086 1.4578-.72 2.1228-1.3881.665-.6682 1.0745-1.3378 1.3795-2.1284.2957-.7632.4966-1.636.552-2.9124.056-1.2809.0692-1.6898.063-4.948-.0063-3.2583-.021-3.6668-.0817-4.9465-.0607-1.2797-.264-2.1487-.5633-2.9117-.3084-.7889-.72-1.4568-1.3876-2.1228C21.2982 1.33 20.628.9208 19.8378.6165 19.074.321 18.2017.1197 16.9244.0645 15.6471.0093 15.236-.005 11.977.0014 8.718.0076 8.31.0215 7.0301.0839m.1402 21.6932c-1.17-.0509-1.8053-.2453-2.2287-.408-.5606-.216-.96-.4771-1.3819-.895-.422-.4178-.6811-.8186-.9-1.378-.1644-.4234-.3624-1.058-.4171-2.228-.0595-1.2645-.072-1.6442-.079-4.848-.007-3.2037.0053-3.583.0607-4.848.05-1.169.2456-1.805.408-2.2282.216-.5613.4762-.96.895-1.3816.4188-.4217.8184-.6814 1.3783-.9003.423-.1651 1.0575-.3614 2.227-.4171 1.2655-.06 1.6447-.072 4.848-.079 3.2033-.007 3.5835.005 4.8495.0608 1.169.0508 1.8053.2445 2.228.408.5608.216.96.4754 1.3816.895.4217.4194.6816.8176.9005 1.3787.1653.4217.3617 1.056.4169 2.2263.0602 1.2655.0739 1.645.0796 4.848.0058 3.203-.0055 3.5834-.061 4.848-.051 1.17-.245 1.8055-.408 2.2294-.216.5604-.4763.96-.8954 1.3814-.419.4215-.8181.6811-1.3783.9-.4224.1649-1.0577.3617-2.2262.4174-1.2656.0595-1.6448.072-4.8493.079-3.2045.007-3.5825-.006-4.848-.0608M16.953 5.5864A1.44 1.44 0 1 0 18.39 4.144a1.44 1.44 0 0 0-1.437 1.4424M5.8385 12.012c.0067 3.4032 2.7706 6.1557 6.173 6.1493 3.4026-.0065 6.157-2.7701 6.1506-6.1733-.0065-3.4032-2.771-6.1565-6.174-6.1498-3.403.0067-6.156 2.771-6.1496 6.1738M8 12.0077a4 4 0 1 1 4.008 3.9921A3.9996 3.9996 0 0 1 8 12.0077"/></svg>Instagram</a>
@@ -116,6 +136,7 @@
         </div>
         <div class="actions">
           <button id="save" type="button" style="display:none">حفظ الفيديو</button>
+          <button id="enhThis" type="button" class="secondary" style="display:none;width:100%">✨ تحسين جودة هذا المقطع</button>
         </div>
       </div>
     </div>
@@ -348,7 +369,7 @@
         try { const r = await fetch("/x/job/" + id, { cache: "no-store" }); if (r.ok) j = await r.json(); } catch {}
         if (j && j.state === "done") {
           return { ok: true, title: j.title || null, author: j.author || null, thumbnail: j.thumbnail || null,
-            filename: guessFilename(j.title, j.ext || "mp4"), url: location.origin + "/x/file/" + id, formats: [], provider: "own" };
+            filename: guessFilename(j.title, j.ext || "mp4"), url: location.origin + "/x/file/" + id, formats: [], provider: "own", size: j.size || 0 };
         }
         if (j && j.state === "error") throw new Error("resolve_failed");
         if (j) setStatus("جاري الاستخراج… " + (j.progress || 0) + "%");
@@ -537,6 +558,13 @@
       hideSave(saveBtn);
       setProgress(0);
       setStatus("جاري التحميل 0%");
+      if (data.provider === "own" && data.size > SAVE_BLOB_MAX) {
+        setProgress(100);
+        setStatus("المقطع كبير جداً (" + Math.round(data.size / 1048576) + " ميجا) لقائمة المشاركة. اضغط «تنزيل الفيديو» واحفظه من «الملفات».", "warn");
+        offerSave({ btn: saveBtn, url: data.url, isVideo: true, status: setStatus });
+        showEnhThis();
+        return;
+      }
       const candidates = formatCandidates(data);
       let lastErr = "empty";
       const hostFails = {};
@@ -606,6 +634,7 @@
       const mbv = Math.max(0.1, Math.round(file.size / 1048576 * 10) / 10);
       setStatus("اكتمل التحميل (" + mbv + " MB) ✓ اضغط «حفظ في الاستوديو».", "ok");
       offerSave({btn: saveBtn, file, isVideo: true, status: setStatus});
+      showEnhThis();
     }
     function downloadBlobFile(file) {
       const url = URL.createObjectURL(file);
@@ -644,6 +673,7 @@
       resultEl.classList.remove("show");
       current = null;
       pendingShareFile = null;
+      hideChoice(); enhThisBtn.style.display = "none";
       setProgress(null);
       setStatus("جاري الاستخراج…");
       goBtn.innerHTML = 'انتظر<span class="spinner"></span>';
@@ -694,17 +724,17 @@
           return;
         }
         urlInput.value = cleaned;
-        await onGo();
+        askMode();
       } catch {
         setStatus("تعذّر قراءة الحافظة — الصق يدوياً في الخانة ثم اضغط تحميل.", "warn");
         urlInput.focus();
       }
     }
 
-    goBtn.addEventListener("click", onGo);
+    goBtn.addEventListener("click", askMode);
     pasteBtn.addEventListener("click", pasteAndGo);
     urlInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") onGo();
+      if (e.key === "Enter") askMode();
     });
     urlInput.addEventListener("paste", (e) => {
       const text = (e.clipboardData && e.clipboardData.getData("text")) || "";
@@ -712,8 +742,140 @@
       if (!cleaned) return;
       e.preventDefault();
       urlInput.value = cleaned;
-      setTimeout(() => onGo(), 0);
+      setTimeout(() => askMode(), 0);
     });
+
+    // ——— الاختيار: تحميل عادي أو مع تحسين الجودة ———
+    const dlChoice = $("dlChoice"), dlEnhOpts = $("dlEnhOpts"), dlQ = $("dlQ"), enhThisBtn = $("enhThis");
+    let dlQv = "hd1080";
+    function hideChoice(){ dlChoice.hidden = true; dlEnhOpts.hidden = true; }
+    function askMode(){
+      const url = cleanUrl(urlInput.value);
+      if (url && url !== urlInput.value.trim()) urlInput.value = url;
+      if (!url || !isHttpUrl(url)) {
+        setStatus("الصق رابط مقطع صالح (TikTok / Instagram / X / Facebook).", "bad");
+        urlInput.focus(); return;
+      }
+      dlChoice.hidden = false; dlEnhOpts.hidden = true;
+      setStatus("اختر: تحميل عادي أو مع تحسين الجودة.", null);
+      try { dlChoice.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (e) {}
+    }
+    function showEnhThis(){ if (lastPageUrl) enhThisBtn.style.display = ""; }
+    $("dlNormal").addEventListener("click", () => { hideChoice(); onGo(); });
+    $("dlEnh").addEventListener("click", () => { dlEnhOpts.hidden = false; });
+    [...dlQ.querySelectorAll(".fmt")].forEach((b) => b.addEventListener("click", () => {
+      [...dlQ.querySelectorAll(".fmt")].forEach((x) => x.classList.remove("active"));
+      b.classList.add("active"); dlQv = b.dataset.q;
+    }));
+    $("dlEnhGo").addEventListener("click", () => {
+      const url = cleanUrl(urlInput.value) || lastPageUrl;
+      if (!url || !isHttpUrl(url)) { askMode(); return; }
+      hideChoice(); onEnhGo(url, dlQv);
+    });
+    enhThisBtn.addEventListener("click", () => {
+      if (lastPageUrl) urlInput.value = lastPageUrl;
+      dlChoice.hidden = false; dlEnhOpts.hidden = false;
+      try { dlChoice.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) {}
+    });
+    function fmtS(n){ n=Math.max(0,Math.round(n||0)); const h=Math.floor(n/3600), m=Math.floor((n%3600)/60), x=n%60;
+      if (h) return h+" س "+m+" د"; return m ? (m+" د "+x+" ث") : (x+" ث"); }
+    async function onEnhGo(url, q){
+      const myGen = ++resolveGen;
+      lastPageUrl = url;
+      goBtn.disabled = true; enhThisBtn.style.display = "none";
+      pendingShareFile = null; hideSave(saveBtn);
+      resultEl.classList.add("show");
+      titleEl.textContent = "تحميل مع تحسين الجودة"; authorEl.textContent = "";
+      thumbEl.hidden = true;
+      setProgress(2); setStatus("جاري بدء الطلب…", "warn");
+      try {
+        let id = null; const t0 = Date.now();
+        while (!id && Date.now() - t0 < 90000) {
+          let r = null;
+          try { r = await withTimeout(fetch("/e/job", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url, q }) }), 45000); } catch (e) {}
+          if (r && r.ok) { id = (await r.json()).id; break; }
+          if (r && r.status === 400) throw new Error("invalid_url");
+          if (r && r.status === 429) throw new Error("busy");
+          setStatus("جاري تشغيل الخادم… لحظات", "warn"); await sleep(2500);
+        }
+        if (!id) throw new Error("server-fail");
+        try { localStorage.setItem("dlEnhJob", JSON.stringify({ id, t: Date.now(), url })); } catch (e) {}
+        await pollLinkEnh(id, myGen);
+      } catch (e) { linkEnhFail(e); }
+      finally { if (myGen === resolveGen) { goBtn.disabled = false; goBtn.textContent = "تحميل"; } }
+    }
+    function linkEnhFail(e){
+      try { localStorage.removeItem("dlEnhJob"); } catch (_) {}
+      const s = String(e && e.message || e);
+      if (s === "cancel") return;
+      let msg = "تعذّر تحميل وتحسين المقطع. جرّب «تحميل عادي» أو أعد المحاولة.";
+      if (/invalid_url/.test(s)) msg = "الصق رابط مقطع صالح يبدأ بـ https://";
+      if (/busy/.test(s)) msg = "الخادم مشغول بتحسين مقاطع ثانية الحين. جرّب بعد شوي.";
+      if (/too_long/.test(s)) msg = "المقطع أطول من الحد (30 دقيقة، أو 5 دقائق لمقاطع 4K).";
+      if (/resolve_failed|server-fail/.test(s)) msg = "تعذّر تحميل المقطع من الرابط. تأكد أنه عام وجرّب مرة ثانية.";
+      if (/timeout/.test(s)) msg = "أخذ وقت طويل وتوقف. جرّب مقطعاً أقصر أو 720p.";
+      if (/gone/.test(s)) msg = "انتهت صلاحية الطلب على الخادم (أو أُعيد تشغيله). أعد المحاولة.";
+      setProgress(null); setStatus(msg, "bad");
+    }
+    async function pollLinkEnh(id, myGen){
+      const t0 = Date.now(); let miss = 0;
+      while (Date.now() - t0 < 6 * 3600 * 1000) {
+        await sleep(2000);
+        if (myGen !== undefined && myGen !== resolveGen) throw new Error("cancel");
+        let st = null;
+        try {
+          const r = await fetch("/c/job/" + id, { cache: "no-store" });
+          if (r.status === 404) { if (++miss >= 3) throw new Error("gone"); continue; }
+          if (r.ok) { st = await r.json(); miss = 0; }
+        } catch (e) { if (String(e && e.message) === "gone") throw e; }
+        if (!st) continue;
+        if (st.title) titleEl.textContent = st.title;
+        if (st.thumbnail && thumbEl.hidden) { thumbEl.src = st.thumbnail; thumbEl.hidden = false; }
+        if (st.state === "error") throw new Error(st.error || "enhance");
+        if (st.stage === "download" || (st.state === "running" && st.stage !== "enhance")) {
+          const p = st.dl_progress || 0; setProgress(2 + p * 0.25);
+          setStatus("١/٢ جاري تحميل المقطع… " + p + "%", "warn"); continue;
+        }
+        if (st.state === "queued") { setProgress(28); setStatus("بالانتظار… فيه تحسين قبلك، بيبدأ بعده تلقائياً", "warn"); continue; }
+        if (st.state === "running") {
+          const p = st.progress || 0; setProgress(28 + p * 0.7);
+          let t = "٢/٢ جاري تحسين الجودة… " + p + "%";
+          if (st.out_w) t += " (" + st.src_w + "×" + st.src_h + " ← " + st.out_w + "×" + st.out_h + ")";
+          if (st.eta != null && p > 12) t += " · باقي تقريباً " + fmtS(st.eta);
+          setStatus(t, "warn"); continue;
+        }
+        if (st.state === "done") {
+          try { localStorage.removeItem("dlEnhJob"); } catch (e) {}
+          setProgress(100);
+          const url = "/c/file/" + id;
+          const dims = st.out_w ? (" — " + st.out_w + "×" + st.out_h) : "";
+          authorEl.textContent = "تم التحسين" + dims;
+          if ((st.size || 0) > SAVE_BLOB_MAX) {
+            offerSave({ btn: saveBtn, url, isVideo: true, status: setStatus });
+            setStatus("تم التحسين ✓ — الملف كبير (" + Math.round(st.size / 1048576) + " ميجا) لقائمة المشاركة، اضغط «تنزيل الفيديو».", "ok");
+            return;
+          }
+          setStatus("تم التحسين ✓ — جاري تجهيز الفيديو للحفظ…", "warn");
+          const file = await fetchAsFile(url, shortName("video", "mp4"), "video/mp4", (p) => setStatus("جاري تجهيز الفيديو للحفظ… " + Math.round(p) + "%", "warn"));
+          pendingShareFile = file;
+          setStatus("تم التحسين ✓" + dims + " — اضغط «حفظ في الاستوديو».", "ok");
+          offerSave({ btn: saveBtn, file, isVideo: true, status: setStatus });
+          return;
+        }
+      }
+      throw new Error("timeout");
+    }
+    // resume a link+enhance job after Safari reloads the tab
+    (function resumeLinkEnh(){
+      try {
+        const j = JSON.parse(localStorage.getItem("dlEnhJob") || "null");
+        if (!j || !j.id || Date.now() - j.t > 6 * 3600 * 1000) return;
+        if (j.url) { urlInput.value = j.url; lastPageUrl = j.url; }
+        resultEl.classList.add("show"); titleEl.textContent = "تحميل مع تحسين الجودة"; authorEl.textContent = "";
+        thumbEl.hidden = true; setStatus("نكمل متابعة طلب التحسين السابق…", "warn"); setProgress(5);
+        pollLinkEnh(j.id).catch(linkEnhFail);
+      } catch (e) {}
+    })();
 
     // ——— تحويل الملفات (مستقل عن مسار التحميل) ———
     const cfile = $("cfile");
