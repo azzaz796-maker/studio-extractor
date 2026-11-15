@@ -4,13 +4,34 @@ from fastapi.responses import FileResponse, JSONResponse
 import yt_dlp, re, json, urllib.request
 from convert import (create_job as c_create, CJOBS, cleanup_c, targets_for, MIME as CMIME, MAX_UPLOAD,
                     _have_soffice, init_upload, save_chunk, finish_upload, cleanup_uploads,
-                    disk_free, need_bytes, UCHUNK, ensure_disk, ENH_MAX_SEC)
+                    disk_free, need_bytes, UCHUNK, ensure_disk, ENH_MAX_SEC, ENH, CLOCK,
+                    ROOT as C_ROOT, run_job as c_run_job, probe_video, enh_limit)
 
 UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
 
 def getjson(u):
     r = urllib.request.urlopen(urllib.request.Request(u, headers={"User-Agent": UA, "Accept": "application/json"}), timeout=20)
     return json.loads(r.read())
+
+def _vres(x):
+    m = re.search(r"/(\d{2,5})x(\d{2,5})/", x.get("url", ""))
+    return (int(m[1]), int(m[2])) if m else (0, 0)
+
+
+def pick_x_variant(vs, dur):
+    """X offers up to 4K/25 Mbps; a phone needs <=1080p and a file Safari can hold.
+    Highest quality with short side <=1080 and est. size <=150 MB, else <=720p, else smallest."""
+    vs = sorted(vs, key=lambda x: x.get("bitrate") or 0, reverse=True)
+    def est(x):
+        return (x.get("bitrate") or 0) * (dur or 60) / 8
+    for cap, mx in ((1080, 150e6), (720, 300e6), (480, 1e12)):
+        for x in vs:
+            w, h = _vres(x)
+            short = min(w, h) if w and h else 0
+            if short and short <= cap and est(x) <= mx:
+                return x
+    return vs[-1]
+
 
 def alt_source(url):
     m = re.search(r"(?:twitter|x)\.com/([^/]+)/status/(\d+)", url)
@@ -25,7 +46,7 @@ def alt_source(url):
                     best = v.get("url")
                     vs = [x for x in v.get("variants") or [] if "mp4" in (x.get("content_type") or x.get("url", ""))]
                     if vs:
-                        best = max(vs, key=lambda x: x.get("bitrate") or 0)["url"]
+                        best = pick_x_variant(vs, v.get("duration") or 0)["url"]
                     if best:
                         return best, {"title": (t.get("text") or "x-video")[:80], "thumbnail": v.get("thumbnail_url")}
             except Exception:
@@ -141,7 +162,7 @@ def run(jid, url):
             return
         j.update(state="error", error=err)
 
-PLAT = re.compile(r"^https://([a-z0-9-]+\.)*(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|x\.com|twitter\.com)/", re.I)
+PLAT = re.compile(r"^https://([a-z0-9-]+\.)*(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|x\.com|twitter\.com|facebook\.com|fb\.watch|fb\.com)/", re.I)
 ALLOW = ["gendownload.com","tikwm.com","twimg.com","googlevideo.com","ytimg.com","tiktokcdn.com","tiktokcdn-us.com",
          "tiktokv.com","cdninstagram.com","fbcdn.net","xenon.zone","cjs.nz"]
 DUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
@@ -204,6 +225,14 @@ async def resolve(req: Request):
     m = re.search(r"youtube\.com/shorts/([\w-]{6,})", url) or re.search(r"youtu\.be/([\w-]{6,})", url)
     if m:
         url = "https://www.youtube.com/watch?v=" + m[1]
+    if re.search(r"(?:twitter|x)\.com/[^/]+/status/\d+", url):
+        try:
+            u, meta = await asyncio.to_thread(alt_source, url)
+            if u:
+                return {"ok": True, "title": meta.get("title"), "thumbnail": meta.get("thumbnail"), "filename": "video.mp4",
+                        "url": u, "formats": [], "provider": "alt", "estimatedSize": None}
+        except Exception:
+            pass
     t0 = time.time()
     while time.time() - t0 < 60:
         for fn, to in ((cobalt, 45), (gendownload, 30)):
@@ -437,6 +466,59 @@ def cfile(jid: str):
     fn = j.get("filename") or ("converted." + j.get("dst_ext", "bin"))
     return FileResponse(j["file"], media_type=mt, filename=fn,
                         headers={"cache-control": "no-store"})
+
+# ——— download + enhance in one job (reuses /c/job/{id} and /c/file/{id}) ———
+def _run_link_enhance(jid, url):
+    j = CJOBS[jid]
+    try:
+        xj = create_job(url)
+        t0 = time.time()
+        while True:
+            x = JOBS.get(xj) or {}
+            if x.get("state") == "done":
+                break
+            if x.get("state") == "error" or not x:
+                raise RuntimeError("resolve_failed")
+            if time.time() - t0 > 900:
+                raise RuntimeError("timeout")
+            j["dl_progress"] = x.get("progress") or 0
+            j["progress"] = 0
+            time.sleep(1)
+        src = ensure_mp4(x)
+        j.update(title=x.get("title"), thumbnail=x.get("thumbnail"), author=x.get("author"), dl_progress=100)
+        infile = os.path.join(j["dir"], "in.mp4")
+        shutil.copyfile(src, infile)
+        info = probe_video(infile)
+        if info["dur"] > enh_limit(info, j["dst_ext"]) + 1:
+            raise RuntimeError("too_long")
+        j.update(infile=infile, stage="enhance", state="queued", at=time.time())
+    except Exception as e:
+        j.update(state="error", stage="download", error=str(e)[:200], at=time.time())
+        return
+    c_run_job(jid)  # waits for the single enhance slot, then runs the same pipeline as uploads
+
+
+@app.post("/e/job")
+async def ejob(req: Request):
+    body = await req.json()
+    url = (body.get("url") or "").strip()
+    q = (body.get("q") or "hd1080").strip().lower()
+    if not PLAT.match(url):
+        raise HTTPException(400, "invalid_url")
+    if q not in ENH:
+        raise HTTPException(400, "unsupported")
+    cleanup_c()
+    with CLOCK:
+        active = sum(1 for j in CJOBS.values() if j["state"] in ("queued", "running"))
+        if active >= 3:
+            raise HTTPException(429, "busy")
+        jid = uuid.uuid4().hex
+        d = os.path.join(C_ROOT, jid)
+        os.makedirs(d, exist_ok=True)
+        CJOBS[jid] = {"state": "running", "stage": "download", "progress": 0, "dl_progress": 0, "at": time.time(),
+                      "dir": d, "src_ext": "mp4", "dst_ext": q, "src_name": "link"}
+    threading.Thread(target=_run_link_enhance, args=(jid, url), daemon=True).start()
+    return {"id": jid}
 
 @app.get("/c/targets")
 def ctargets(ext: str = ""):
