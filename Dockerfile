@@ -12,4 +12,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -U -r requirements.txt
 COPY app.py icons_data.py convert.py ./
 COPY static ./static
-CMD ["sh","-c","(cd /pot && node build/main.js >/tmp/pot.log 2>&1 &) ; uvicorn app:app --host 0.0.0.0 --port ${PORT:-10000}"]
+ENV PYTHONUNBUFFERED=1
+EXPOSE 8080
+# PORT is set by the host (Render sets 10000); defaults to 8080 elsewhere (Northflank, Railway, etc.)
+CMD ["sh","-c","(cd /pot && node build/main.js >/tmp/pot.log 2>&1 &) ; uvicorn app:app --host 0.0.0.0 --port ${PORT:-8080}"]
